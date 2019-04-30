@@ -348,13 +348,13 @@ class ptReplica(multiprocessing.Process):
 		#---------------------------------------
 		# Create memory to save all the accepted proposals of parameters, model predictions and likelihood
 
-		pos_param = np.empty((batch_factor+1,v_current.size))   
+		pos_param = np.empty((samples,v_current.size))   
 		pos_param[0,:] = v_proposal # assign first proposal
 
-		pos_samples_t = np.empty((batch_factor+1, sim_vec_t.size)) # list of all accepted (plus repeats) of pred cores  
+		pos_samples_t = np.empty((samples, sim_vec_t.size)) # list of all accepted (plus repeats) of pred cores  
 		pos_samples_t[0,:] = sim_vec_t # assign the first core pred
 
-		pos_samples_d = np.empty((batch_factor+1, sim_vec_d.size)) # list of all accepted (plus repeats) of pred cores  
+		pos_samples_d = np.empty((samples, sim_vec_d.size)) # list of all accepted (plus repeats) of pred cores  
 		pos_samples_d[0,:] = sim_vec_d # assign the first core pred
 		
 		pos_likl = np.empty((samples, 2)) # one for posterior of likelihood and the other for all proposed likelihood
@@ -389,7 +389,10 @@ class ptReplica(multiprocessing.Process):
 		b = 0
 		
 		for i in range(samples-1):
-			print (' Sample : ', i, 'b',b,'Temp:',self.temperature)
+
+
+
+			#print (' Sample : ', i, 'b',b,'Temp:',self.temperature)
 			idx_sed = int((num_param-3)/2)
 			# Update by perturbing all parameters using normal proposal distribution and check limits.
 			tmat = v_current[:idx_sed].reshape(4,communities)
@@ -451,7 +454,7 @@ class ptReplica(multiprocessing.Process):
 			# Passing paramters to calculate likelihood and diff score
 			[likelihood_proposal, diff, sim_pred_t, sim_pred_d, sim_vec_t, sim_vec_d] = self.likelihoodWithDependence(reef, v_proposal, S_star, cps_star, ca_props_star)
 
-			del diff 
+			#del diff 
 			del sim_pred_d
 			del sim_pred_t
 
@@ -494,14 +497,15 @@ class ptReplica(multiprocessing.Process):
 
 			pos_likl[i+1,0] = likelihood_proposal
 			if u < mh_prob: # Accept sample
-				print ('Sample',i, 'is accepted.\n\tLikelihood ', likelihood_proposal,'\n\tTemperature:', self.temperature,'\n\tTotal no. accepted:', num_accepted)
+				b = i
+				print ('Sample',i, ' \n\tLikelihood ', likelihood_proposal,'\n\tTemperature:', self.temperature,'\n\t  accepted, sample, diff:', num_accepted,  diff)
 				count_list.append(i)            # Append sample number to accepted list
 				num_accepted = num_accepted + 1 
 				accept_list[i+1] = num_accepted
 
 				v_current = v_proposal 
 
-				print(v_proposal)
+				#print(v_proposal)
 				likelihood = likelihood_proposal 
 				pos_likl[i + 1,1]=likelihood  # contains  all proposal liklihood (accepted and rejected ones) 
 				pos_param[b+1,:] = v_current # features rain, erodibility and others  (random walks is only done for this vector) 
@@ -511,57 +515,12 @@ class ptReplica(multiprocessing.Process):
 				c_pr_sed = p_pr_sed  
 
 			else: # Reject sample
+				b = i
 				pos_likl[i + 1, 1] = pos_likl[i,1]  
 				pos_param[b+1,:] = pos_param[i,:] 
 				pos_samples_t[b+1,:] = pos_samples_t[i,:] 
 				pos_samples_d[b+1,:] = pos_samples_t[i,:] 
-
-			b = b + 1
-			
-			# if (b % batch_factor == 0) and (b != 0):
-			if (b+1) % (batch_factor+1) == 0 and b != 0:
-				print('Resetting Batch counter')
-
-				outparam = open(self.filename+'/posterior/pos_parameters/chain_'+ str(self.temperature)+ '.txt','a+')
-				np.savetxt(outparam, pos_param[:batch_factor+1,:], newline='\n') #prints 5
-
-				out_t = open(self.filename+'/posterior/predicted_core/pos_samples_t/chain_'+ str(self.temperature)+ '.txt','a+')
-				np.savetxt(out_t, pos_samples_t[:batch_factor+1,:], fmt='%1.2f', newline='\n')
-
-				out_d = open(self.filename+'/posterior/predicted_core/pos_samples_d/chain_'+ str(self.temperature)+ '.txt','a+')
-				np.savetxt(out_d, pos_samples_d[:batch_factor+1,:], fmt='%1.2f', newline='\n')
-
-				b = -1
-
-				outparam.close()
-				out_t.close()
-				out_d.close()
-			
-			elif (i == samples-2):	
-				print('pos_param', pos_param, pos_param.shape)	
-				outparam = open(self.filename+'/posterior/pos_parameters/chain_'+ str(self.temperature)+ '.txt','a+')
-				np.savetxt(outparam, pos_param[:b+1,:], newline='\n') #prints 5
-
-				out_t = open(self.filename+'/posterior/predicted_core/pos_samples_t/chain_'+ str(self.temperature)+ '.txt','a+')
-				np.savetxt(out_t, pos_samples_t[:b+1,:], fmt='%1.2f', newline='\n')
-
-				out_d = open(self.filename+'/posterior/predicted_core/pos_samples_d/chain_'+ str(self.temperature)+ '.txt','a+')
-				np.savetxt(out_d, pos_samples_d[:b+1,:], fmt='%1.2f', newline='\n')
-				
-				outparam.close()
-				out_t.close()
-				out_d.close()
-				
-				'''
-				del outparam 
-				del out_t 
-				del out_d 
-				'''
-
-
-			#----------------------------------------------------------------------------------------
-			# delete all varaibled and clear memory
-			#----------------------------------------------------------------------------------------
+ 
 
 			
 			del idx_sed 
@@ -605,7 +564,7 @@ class ptReplica(multiprocessing.Process):
 			if ( i % self.swap_interval == 0 ): 
 			#if ( i % 2 == 0 ): 
 
-				if i> burnsamples and self.runninghisto == True:
+				'''if i> burnsamples and self.runninghisto == True:
 					hist, bin_edges = np.histogram(pos_param[burnsamples:i,0], density=True)
 					plt.hist(pos_param[burnsamples:i,0], bins='auto')  # arguments are passed to np.histogram
 					plt.title("Parameter 1 Histogram")
@@ -624,7 +583,7 @@ class ptReplica(multiprocessing.Process):
 					plt.close()
 
 					del hist
-					del bin_edges
+					del bin_edges'''
 
  
 				others = np.asarray([likelihood])
@@ -638,11 +597,11 @@ class ptReplica(multiprocessing.Process):
 				del others
 				
 				
-				print('-----------------------------------------------')
+				'''print('-----------------------------------------------')
 				print('-----------------------------------------------')
 				print (getsizeof(likelihood))
 				print('-----------------------------------------------')
-				print('-----------------------------------------------')
+				print('-----------------------------------------------')'''
 
 	
 
@@ -942,13 +901,15 @@ class ParallelTempering:
 		print('Burnin:',burnin)
 
 		
-		file_name = self.folder + '/posterior/pos_parameters/'+filename + str(self.temperature[0]) + '.txt'
-		dat_dummy = np.loadtxt(file_name) 
+		#file_name = self.folder + '/posterior/pos_parameters/'+filename + str(self.temperature[0]) + '.txt'
+		#dat_dummy = np.loadtxt(file_name) 
 
-		pos_param = np.zeros((self.num_chains, dat_dummy.shape[0]-burnin, self.num_param))
+		#print(dat_dummy.shape)
+
+		pos_param = np.zeros((self.num_chains, self.NumSamples -burnin, self.num_param))
 		print('Pos_param.shape:', pos_param.shape)
-		pred_t = np.zeros((self.num_chains, dat_dummy.shape[0]-burnin, self.gt_vec_t.shape[0]))
-		pred_d = np.zeros((self.num_chains, dat_dummy.shape[0]-burnin, self.gt_vec_d.shape[0]))
+		pred_t = np.zeros((self.num_chains, self.NumSamples-burnin, self.gt_vec_t.shape[0]))
+		pred_d = np.zeros((self.num_chains, self.NumSamples-burnin, self.gt_vec_d.shape[0]))
 
 		print('pred_t:',pred_t,'pred_t.shape:', pred_t.shape)
 		print('gt_prop_t.shape:',self.gt_prop_t.shape)
@@ -1252,9 +1213,9 @@ def main():
 	# PT is a multicore implementation must num_chains >= 2
 	# Choose a value less than the numbe of core available (avoid context swtiching)
 	#-------------------------------------------------------------------------------------
-	samples = 5000  # total number of samples by all the chains (replicas) in parallel tempering
+	samples = 10000  # total number of samples by all the chains (replicas) in parallel tempering
 	num_chains = 10 # number of Replica's that will run on separate cores. Note that cores will be shared automatically - if enough cores not available
-	swap_ratio = 0.05    #adapt these 
+	  
 	burn_in = 0.4  
 
 
@@ -1264,7 +1225,7 @@ def main():
 	#parameters for Parallel Tempering
 	maxtemp = 5  
 	
-	swap_interval =   int(swap_ratio * (samples/num_chains)) #how ofen you swap neighbours
+	swap_interval =  5 #int(swap_ratio * (samples/num_chains)) #how ofen you swap neighbours
 	print('swap_interval:',swap_interval)
 
 
