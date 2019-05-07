@@ -1,6 +1,4 @@
- 
-  
-#Main Contributers:   Rohitash Chandra, Ratneel Deo and Jodie Pall  Email: c.rohitash@gmail.com 
+#Main Contributers:   Rohitash Chandra and Jodie Pall  Email: c.rohitash@gmail.com 
 
 #rohitash-chandra.github.io
 
@@ -11,7 +9,6 @@
 
 from __future__ import print_function, division
 import multiprocessing
-import gc
 
 import os
 import math
@@ -21,7 +18,6 @@ import csv
 import numpy as np
 from numpy import inf
 import matplotlib as mpl
-mpl.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.mlab as mlab
 from matplotlib.cm import terrain, plasma, Set2
@@ -30,8 +26,6 @@ from pyReefCore.model import Model
 from pyReefCore import plotResults
 from cycler import cycler
 from scipy import stats 
-
-from sys import getsizeof
 
 cmap=plt.cm.Set2
 c = cycler('color', cmap(np.linspace(0,1,8)) )
@@ -72,7 +66,7 @@ plt.rcParams["axes.prop_cycle"] = c
 
 class ptReplica(multiprocessing.Process):
 	def __init__(self, samples,filename,xmlinput,vis,num_communities, vec_parameters, realvalues, maxlimits_vec,minlimits_vec,stepratio_vec,
-		check_likelihood,swap_interval,simtime, c_pr_flow, c_pr_sed, gt_depths, gt_vec_d, gt_timelay, gt_vec_t, gt_prop_t, gt_prop_d, tempr, parameter_queue,event , main_proc, burn_in):
+		check_likelihood,swap_interval,simtime, c_pr_flow, c_pr_sed, gt_depths, gt_vec_d, gt_timelay, gt_vec_t, gt_prop_t, tempr, parameter_queue,event , main_proc, burn_in):
 
 		#--------------------------------------------------------
 		multiprocessing.Process.__init__(self)
@@ -90,8 +84,8 @@ class ptReplica(multiprocessing.Process):
 		self.check_likelihood =  check_likelihood 
 		self.swap_interval = swap_interval
 		self.simtime = simtime
-		self.realvalues_vec = realvalues # true values of free parameters for comparision. Note this will not be avialable in real world application
-		self.num_param =  maxlimits_vec.size
+		self.realvalues_vec = np.asarray(realvalues) # true values of free parameters for comparision. Note this will not be avialable in real world application
+		self.num_param =  realvalues.size
 		self.c_pr_flow = c_pr_flow
 		self.c_pr_sed = c_pr_sed
 
@@ -100,8 +94,6 @@ class ptReplica(multiprocessing.Process):
 		self.gt_timelay = gt_timelay
 		self.gt_vec_t = gt_vec_t
 		self.gt_prop_t = gt_prop_t
-
-		self.gt_prop_d = gt_prop_d
 
 		self.temperature = tempr
 		self.processID = tempr      
@@ -123,13 +115,11 @@ class ptReplica(multiprocessing.Process):
 		# self.core_data =  core_data 
 		self.runninghisto = False  # if you want to have histograms of the chains during runtime in pos_variables folder NB: this has issues in Artimis
 
-		self.lhood_timestructure = False  # False indicates depth_structure in lhood
-
 	def runModel(self, reef, input_vector):
 		reef.convertVector(self.communities, input_vector, self.sedsim, self.flowsim) #model.py
 		self.true_sed, self.true_flow = reef.load_xml(self.input, self.sedsim, self.flowsim)
 		# if self.vis[0] == True:
-			# reef.core.initialSetting(size=(8,2.5), size2=(8,3.5)) # View initial parameters
+		    # reef.core.initialSetting(size=(8,2.5), size2=(8,3.5)) # View initial parameters
 		reef.run_to_time(self.simtime,showtime=100.)
 		# if self.vis[1] == True:
 		#     reef.plot.drawCore(lwidth = 3, colsed=self.colors, coltime = self.colors2, size=(9,8), font=8, dpi=300)
@@ -196,29 +186,68 @@ class ptReplica(multiprocessing.Process):
 		sim_prop = np.append(sim_prop,v_nogrowth,axis=1)
 		return sim_prop
 
- 
-
- 
-
-
-	def likelihoodWithProps(self, reef, gt_prop_d, input_v): #depth_structure in lhood
+	def likelihoodWithDependence(self,reef, input_v, S_star, cpts_star, ca_props_star):
+		"""
+		(1) compute the number of segments (S)
+		(2) compute the location of the cutpoints (xi) 
+		(3) find the proportion in the segment (ca_props)
+		"""
 		sim_prop_t, sim_prop_d, sim_timelay = self.runModel(reef, input_v)
-		sim_prop_d = sim_prop_d.T
-		# sim_prop_d5 = self.noGrowthColumn(sim_prop_d)
-		# sim_prop_d5 = sim_prop_d5.T
-		intervals = sim_prop_d.shape[0]
-
-		log_core = np.log(sim_prop_d+0.0001)
-		log_core[log_core == -inf] = 0
-		z = log_core * gt_prop_d
-		likelihood = np.sum(z)
-		diff = self.diffScore(sim_prop_d,gt_prop_d, intervals)
-		sim_vec_d = self.convertCoreFormat(sim_prop_d)
+		sim_vec_d = self.convertCoreFormat(sim_prop_d.T)
 		sim_vec_t = self.convertCoreFormat(sim_prop_t)
-		# rmse = self.rmse(sim_prop_t5, gt_prop_d)
-		return [likelihood, diff, sim_prop_d, sim_vec_d, sim_vec_t]
+		sim_prop_t5 = self.noGrowthColumn(sim_prop_t)
+
+		# Counting segments, recording location of cutpoints and associated cagal assemblage proportions
+		# print('S_star:',S_star, '\ncpts_star:',cpts_star,'\nca_props_star props:', ca_props_star)
+		S, cpts, ca_props = self.modelOutputParameters(sim_prop_t5,sim_vec_t,sim_timelay)
+		# print('s:',S, '\ncpts:',cpts,'\nca props:', ca_props)
+		# First reject if number of segments in sim != S_star
+		if S != S_star:
+			likelihood=0
+			diff = 100
+			return [likelihood, diff, sim_prop_t5, sim_prop_d.T, sim_vec_t, sim_vec_d]
+		# Likelihood for cutpoints conditional on S_star
+		likl_cpts_star = np.zeros(S_star)
+		for j in range(S_star):
+			if j == 0:
+				distance = cpts[j+1]-cpts[j]
+			else:
+				distance = min((cpts[j+1]-cpts[j]),(cpts[j]-cpts[j-1]))
+			likl_cpts_star[j] = stats.norm.pdf(cpts_star[j],cpts[j],float(distance)/2.)
+		likl_cpts_star = np.ma.masked_invalid(likl_cpts_star)
+		# print('likl_cpts_star:',likl_cpts_star)
+		like_all_cpts_star = np.prod(likl_cpts_star)
+		# print('like_all_cpts_star:',like_all_cpts_star)
+
+		# Multinomial likelihood - a product of the no. of segments
+		likl_ca_prop= np.zeros((S_star,5))
+		for k in range(S_star):
+			likl_ca_prop[k,:] = np.random.multinomial(1,ca_props[k,:],size=1)
+		# print('likl_ca_prop', likl_ca_prop)
+		likl_ca_prop = (likl_ca_prop*100)+1
+		like_all_coral = np.prod(likl_ca_prop)
+		total_likelihood = like_all_cpts_star*like_all_coral
+
+		diff = self.diffScore(sim_prop_t5,self.gt_prop_t, sim_timelay.size)
+		return [total_likelihood, diff, sim_prop_t, sim_prop_d.T, sim_vec_t, sim_vec_d]
+
+	def likelihoodWithProps(self, reef, gt_prop_t, input_v):
+		sim_prop_t, sim_prop_d, sim_timelay = self.runModel(reef, input_v)
+		sim_prop_t5 = self.noGrowthColumn(sim_prop_t)
+		intervals = sim_prop_t5.shape[0]
+		# # Uncomment if noisy synthetic data is required.
+		# self.NoiseToData(intervals,sim_prop_t5)
+		log_core = np.log(sim_prop_t5+0.0001)
+		log_core[log_core == -inf] = 0
+		z = log_core * gt_prop_t
+		likelihood = np.sum(z)
+		diff = self.diffScore(sim_prop_t5,gt_prop_t, intervals)
+		sim_vec_t = self.convertCoreFormat(sim_prop_t5)
+		sim_vec_d = self.convertCoreFormat(sim_prop_d.T)
+		# rmse = self.rmse(sim_prop_t5, gt_prop_t)
+		return [likelihood, diff, sim_prop_t5, sim_prop_d.T, sim_vec_t, sim_vec_d]
 		   
-	def likelihoodWithDominance(self, reef, gt_prop_t, input_v):  #time_structure in lhood
+	def likelihoodWithDominance(self, reef, gt_prop_t, input_v):
 		sim_data_t, sim_data_d, sim_timelay = self.runModel(reef, input_v)
 		sim_data_t5 = self.noGrowthColumn(sim_data_t)
 		intervals = sim_data_t5.shape[0]
@@ -252,12 +281,8 @@ class ptReplica(multiprocessing.Process):
 		samples = self.samples
 		sedlim = [self.minlimits_vec[0], float(self.maxlimits_vec[0])]
 		flowlim = [self.minlimits_vec[12], float(self.maxlimits_vec[12])]
-
-
-		gt_prop_t = self.gt_prop_t 
-		gt_prop_d = self.gt_prop_d 
-
-		gt_vec_t = self.gt_vec_t 
+		gt_prop_t = self.gt_prop_t
+		gt_vec_t = self.gt_vec_t
 		gt_timelay = self.gt_timelay
 		gt_vec_d = self.gt_vec_d
 		gt_depths = self.gt_depths
@@ -282,44 +307,23 @@ class ptReplica(multiprocessing.Process):
 		v_current = v_proposal # to give initial value of the chain
 
 		reef = Model()
-
-
-
-
-
 		S_star, cps_star, ca_props_star = self.modelOutputParameters(gt_prop_t,gt_vec_t,gt_timelay)
-
-		if self.lhood_timestructure == True:
-			[likelihood, diff, sim_pred_t, sim_pred_d, sim_vec_t, sim_vec_d] = self.likelihoodWithDependence(reef, v_proposal, S_star, cps_star, ca_props_star)
-				
-		else: # use lhood_depthstructure
-			[likelihood, diff, sim_prop_d, sim_vec_d, sim_vec_t] = self.likelihoodWithProps(reef, gt_prop_d, v_proposal)
-
-			#print(likelihood, diff, sim_prop_d, sim_vec_d, sim_vec_t, ' likelihood, diff, sim_prop_d, sim_vec_d, sim_vec_t')
-
-
-
-
-
+		[likelihood, diff, sim_pred_t, sim_pred_d, sim_vec_t, sim_vec_d] = self.likelihoodWithDependence(reef, v_proposal, S_star, cps_star, ca_props_star)		 
 		
-		
-
-
-
 		print ('\tInitial likelihood:', likelihood, 'and difference score:', diff)
 		#---------------------------------------
 		# Create memory to save all the accepted proposals of parameters, model predictions and likelihood
 
-		pos_param = np.empty((samples,v_current.size))   
+		pos_param = np.empty((batch_factor+1,v_current.size))   
 		pos_param[0,:] = v_proposal # assign first proposal
 
-		pos_samples_t = np.empty((samples, sim_vec_t.size)) # list of all accepted (plus repeats) of pred cores  
+		pos_samples_t = np.empty((batch_factor+1, sim_vec_t.size)) # list of all accepted (plus repeats) of pred cores  
 		pos_samples_t[0,:] = sim_vec_t # assign the first core pred
 
-		pos_samples_d = np.empty((samples, sim_vec_d.size)) # list of all accepted (plus repeats) of pred cores  
+		pos_samples_d = np.empty((batch_factor+1, sim_vec_d.size)) # list of all accepted (plus repeats) of pred cores  
 		pos_samples_d[0,:] = sim_vec_d # assign the first core pred
-		
-		pos_likl = np.empty((samples, 2)) # one for posterior of likelihood and the other for all proposed likelihood
+	 	
+	 	pos_likl = np.empty((samples, 2)) # one for posterior of likelihood and the other for all proposed likelihood
 		pos_likl[0,:] = [-10000, -10000] # to avoid prob in calc of 5th and 95th percentile later
 
 		# Created to account for asymmetrical proposals 
@@ -334,7 +338,7 @@ class ptReplica(multiprocessing.Process):
 
 		count_list.append(0) # To count number of accepted for each chain (replica)
 		accept_list = np.empty(samples)
-		start = time.time() 
+	 	start = time.time() 
 		num_accepted = 0
 		
 		with file(('%s/description.txt' % (self.filename)),'a') as outfile:
@@ -351,29 +355,10 @@ class ptReplica(multiprocessing.Process):
 		b = 0
 		
 		for i in range(samples-1):
-
-
-
 			print (' Sample : ', i, 'b',b,'Temp:',self.temperature)
-
 			idx_sed = int((num_param-3)/2)
-			#print(idx_sed, num_param, '  +++++++++++ ' )
-
-			print(self.realvalues_vec, ' self.realvalues_vec')
-
-
-
 			# Update by perturbing all parameters using normal proposal distribution and check limits.
-
-
-			#init_pro = np.concatenate((sed1,sed2,sed3,sed4,flow1,flow2,flow3,flow4))
-			#init_pro = np.append(init_pro,(cm_ax,cm_ay,m)) 
-
-
 			tmat = v_current[:idx_sed].reshape(4,communities)
-
-			print(tmat, 'tmat')
-
 			tmatrix = tmat.T
 			t2matrix = np.empty((tmatrix.shape[0], tmatrix.shape[1]))
 			v_id = 0
@@ -384,9 +369,8 @@ class ptReplica(multiprocessing.Process):
 			# reorder each row , then transpose back as sed1, etc.
 			tmp = np.empty((communities,4))
 			for x in range(t2matrix.shape[0]):
-				tmp[x,:]  = np.sort(t2matrix[x,:])
-				
-
+				a = np.sort(t2matrix[x,:])
+				tmp[x,:] = a
 			tmat = tmp.T
 			p_sed1 = tmat[0,:]
 			p_sed2 = tmat[1,:]
@@ -400,18 +384,16 @@ class ptReplica(multiprocessing.Process):
 				for s in range(tmat.shape[0]):
 					t2matrix[x,s] = self.proposalJump(tmatrix[x,s], self.minlimits_vec[v_id], self.maxlimits_vec[v_id], stepsize_vec[v_id])
 					v_id = v_id + 1
-			
 			# reorder each row , then transpose back as flow1, etc.
 			tmp = np.empty((communities,4))
 			for x in range(t2matrix.shape[0]):
-				tmp[x,:] = np.sort(t2matrix[x,:])
-				 
-
+				a = np.sort(t2matrix[x,:])
+				tmp[x,:] = a
 			tmat = tmp.T
 			p_flow1 = tmat[0,:]
 			p_flow2 = tmat[1,:]
 			p_flow3 = tmat[2,:]
-			p_flow4 = tmat[3,:] 
+			p_flow4 = tmat[3,:]
 
 			p_ax = self.proposalJump(v_current[-3], self.minlimits_vec[v_id], self.maxlimits_vec[v_id], stepsize_vec[v_id])
 			v_id = v_id + 1
@@ -428,27 +410,14 @@ class ptReplica(multiprocessing.Process):
 				v_proposal = np.concatenate((p_sed1,p_sed2,p_sed3,p_sed4,p_flow1,p_flow2,p_flow3,p_flow4))
 			v_proposal = np.append(v_proposal,(p_ax,p_ay,p_m))
 
-
-			#v_proposal[0:24] = self.realvalues_vec[0:24]
-
 			# print('Sample:', i, ',v_proposal:', v_proposal)
 			# Passing paramters to calculate likelihood and diff score
-
-			if self.lhood_timestructure == True:
-				[likelihood_proposal, diff, sim_pred_t, sim_pred_d, sim_vec_t, sim_vec_d] = self.likelihoodWithDependence(reef, v_proposal, S_star, cps_star, ca_props_star)
-
-			else: # use lhood_depthstructure
-				[likelihood_proposal, diff, sim_prop_d, sim_vec_d, sim_vec_t] = self.likelihoodWithProps(reef, gt_prop_d, v_proposal)
-
-			#del diff 
-			#del sim_pred_d
-			#del sim_pred_t
-
+			[likelihood_proposal, diff, sim_pred_t, sim_pred_d, sim_vec_t, sim_vec_d] = self.likelihoodWithDependence(reef, v_proposal, S_star, cps_star, ca_props_star)
 
 			# Difference in likelihood from previous accepted proposal
 			diff_likelihood = likelihood_proposal - likelihood
-			#print (i, '\tLikelihood proposal:', likelihood_proposal)
-			#print('\n\tDifference in likelihood proposals:', diff_likelihood)
+			print (i, '\tLikelihood proposal:', likelihood_proposal)
+			print('\n\tDifference in likelihood proposals:', diff_likelihood)
 
 			for c in range(communities):
 				p_pr_flow2[c] = flowlim[1] - p_flow1[c]
@@ -478,20 +447,17 @@ class ptReplica(multiprocessing.Process):
 
 			u = random.uniform(0,1)
 
-			#print('u:', u, 'MH probability:', mh_prob)
-			#print((i % self.swap_interval), i,  self.swap_interval, 'mod swap')
+			print('u:', u, 'MH probability:', mh_prob)
+			print((i % self.swap_interval), i,  self.swap_interval, 'mod swap')
 
 			pos_likl[i+1,0] = likelihood_proposal
 			if u < mh_prob: # Accept sample
-				b = i
-				print ('Sample',i, ' \n\tLikelihood ', likelihood_proposal,'\n\tTemperature:', self.temperature,'\n\t  accepted, sample, diff:', num_accepted,  diff)
+				print ('Sample',i, 'is accepted.\n\tLikelihood ', likelihood_proposal,'\n\tTemperature:', self.temperature,'\n\tTotal no. accepted:', num_accepted)
 				count_list.append(i)            # Append sample number to accepted list
 				num_accepted = num_accepted + 1 
 				accept_list[i+1] = num_accepted
 
 				v_current = v_proposal 
-
-				#print(v_proposal)
 				likelihood = likelihood_proposal 
 				pos_likl[i + 1,1]=likelihood  # contains  all proposal liklihood (accepted and rejected ones) 
 				pos_param[b+1,:] = v_current # features rain, erodibility and others  (random walks is only done for this vector) 
@@ -501,56 +467,43 @@ class ptReplica(multiprocessing.Process):
 				c_pr_sed = p_pr_sed  
 
 			else: # Reject sample
-				b = i
 				pos_likl[i + 1, 1] = pos_likl[i,1]  
 				pos_param[b+1,:] = pos_param[i,:] 
 				pos_samples_t[b+1,:] = pos_samples_t[i,:] 
 				pos_samples_d[b+1,:] = pos_samples_t[i,:] 
- 
 
-			
-			del idx_sed 
-			del tmat 
-			del tmatrix 
-			del t2matrix 
-			del v_id
-			del tmp 
-				
-			
-			del p_sed1 
-			del p_sed2 
-			del p_sed3 
-			del p_sed4 
-			del p_flow1 
-			del p_flow2 
-			del p_flow3 
-			del p_flow4 
-			del  p_ax 
-			del p_ay  
-			del p_m 
-			del v_proposal
-			del all_flow_pr 
-			del p_pr_flow 
-			del all_sed_pr
-			del p_pr_sed 
-			del log_pr_flow_p 
-			del log_pr_sed_p 
-			del log_pr_flow_c
-			del log_pr_sed_c 
-			del log_pr_p 
-			del log_pr_c 
-			del log_pr_diff
-			del u 
-			del mh_prob
-			
-			
-			
+			b = b + 1
 
-			#----------------------------------------------------------------------------------------
+ 			# if (b % batch_factor == 0) and (b != 0):
+ 			if (b+1) % (batch_factor+1) == 0 and b != 0:
+ 				print('Resetting Batch counter')
+
+				outparam = open(self.filename+'/posterior/pos_parameters/chain_'+ str(self.temperature)+ '.txt','a+')
+				np.savetxt(outparam, pos_param[:batch_factor+1,:], newline='\n') #prints 5
+
+				out_t = open(self.filename+'/posterior/predicted_core/pos_samples_t/chain_'+ str(self.temperature)+ '.txt','a+')
+				np.savetxt(out_t, pos_samples_t[:batch_factor+1,:], fmt='%1.2f', newline='\n')
+
+				out_d = open(self.filename+'/posterior/predicted_core/pos_samples_d/chain_'+ str(self.temperature)+ '.txt','a+')
+				np.savetxt(out_d, pos_samples_d[:batch_factor+1,:], fmt='%1.2f', newline='\n')
+
+				b = -1
+			
+			elif (i == samples-2):	
+				print('pos_param', pos_param, pos_param.shape)	
+				outparam = open(self.filename+'/posterior/pos_parameters/chain_'+ str(self.temperature)+ '.txt','a+')
+				np.savetxt(outparam, pos_param[:b+1,:], newline='\n') #prints 5
+
+				out_t = open(self.filename+'/posterior/predicted_core/pos_samples_t/chain_'+ str(self.temperature)+ '.txt','a+')
+				np.savetxt(out_t, pos_samples_t[:b+1,:], fmt='%1.2f', newline='\n')
+
+				out_d = open(self.filename+'/posterior/predicted_core/pos_samples_d/chain_'+ str(self.temperature)+ '.txt','a+')
+				np.savetxt(out_d, pos_samples_d[:b+1,:], fmt='%1.2f', newline='\n')
+
+
 			if ( i % self.swap_interval == 0 ): 
-			#if ( i % 2 == 0 ): 
 
-				'''if i> burnsamples and self.runninghisto == True:
+				if i> burnsamples and self.runninghisto == True:
 					hist, bin_edges = np.histogram(pos_param[burnsamples:i,0], density=True)
 					plt.hist(pos_param[burnsamples:i,0], bins='auto')  # arguments are passed to np.histogram
 					plt.title("Parameter 1 Histogram")
@@ -568,29 +521,14 @@ class ptReplica(multiprocessing.Process):
 					plt.savefig(file_name + '_1.png')
 					plt.close()
 
-					del hist
-					del bin_edges'''
-
  
 				others = np.asarray([likelihood])
 				param = np.concatenate([v_current,others])     
-
-
+			 
 				# paramater placed in queue for swapping between chains
 				self.parameter_queue.put(param)
-
-				del param
-				del others
 				
 				
-				'''print('-----------------------------------------------')
-				print('-----------------------------------------------')
-				print (getsizeof(likelihood))
-				print('-----------------------------------------------')
-				print('-----------------------------------------------')'''
-
-	
-
 				#signal main process to start and start waiting for signal for main
 				self.signal_main.set()              
 				self.event.wait()
@@ -605,16 +543,11 @@ class ptReplica(multiprocessing.Process):
 						v_current= result[0:v_current.size]     
 						likelihood = result[v_current.size]
 
-						del result
-
 					except:
 						print ('error')	 
-
-					
-
-
 		accepted_count =  len(count_list) 
 		accept_ratio = accepted_count / (samples * 1.0) * 100
+
 
 
 		#--------------------------------------------------------------- 
@@ -633,26 +566,23 @@ class ptReplica(multiprocessing.Process):
 		file_name = self.filename + '/posterior/accept_list/chain_' + str(self.temperature) + '.txt'
 		np.savetxt(file_name, accept_list, fmt='%1.2f')
  
-		file_name = self.filename+'/posterior/pos_parameters/chain_'+ str(self.temperature)+ '.txt'
-		np.savetxt(file_name,pos_param ) 
+		# file_name = self.filename+'/posterior/pos_parameters/chain_'+ str(self.temperature)+ '.txt'
+		# np.savetxt(file_name,pos_param ) 
 
-		file_name = self.filename+'/posterior/predicted_core/pos_samples_t/chain_'+ str(self.temperature)+ '.txt'
-		np.savetxt(file_name, pos_samples_t, fmt='%1.2f')
+		# file_name = self.filename+'/posterior/predicted_core/pos_samples_t/chain_'+ str(self.temperature)+ '.txt'
+		# np.savetxt(file_name, pos_samples_t, fmt='%1.2f')
 
-		file_name = self.filename+'/posterior/predicted_core/pos_samples_d/chain_'+ str(self.temperature)+ '.txt'
-		np.savetxt(file_name, pos_samples_d, fmt='%1.2f')
+		# file_name = self.filename+'/posterior/predicted_core/pos_samples_d/chain_'+ str(self.temperature)+ '.txt'
+		# np.savetxt(file_name, pos_samples_d, fmt='%1.2f')
  
-		del param
-		del others
+ 
  
 		self.signal_main.set()
-
-		return
 
 
 class ParallelTempering:
 
-	def __init__(self,num_chains,communities, NumSample,fname,xmlinput,num_param,maxtemp,swap_interval,simtime,true_vec_parameters, gt_depths,gt_vec_d,gt_timelay,gt_vec_t,gt_prop_t, gt_prop_d):
+	def __init__(self,num_chains,communities, NumSample,fname,xmlinput,num_param,maxtemp,swap_interval,simtime,true_vec_parameters, gt_depths,gt_vec_d,gt_timelay,gt_vec_t,gt_prop_t):
 
 		self.num_chains = num_chains
 		self.communities = communities
@@ -669,7 +599,6 @@ class ParallelTempering:
 		self.gt_timelay = gt_timelay
 		self.gt_vec_t = gt_vec_t
 		self.gt_prop_t = gt_prop_t
-		self.gt_prop_d = gt_prop_d
 		# self.c_pr_flow = c_pr_flow
 		# self.c_pr_sed = c_pr_sed
 		# self.run_nb_str =run_nb_str 
@@ -702,7 +631,7 @@ class ParallelTempering:
 		for i in xrange(0, self.num_chains):
 			vec_parameters, c_pr_flow, c_pr_sed = initial_vec(num_communities, num_sed, num_flow, sedlim, flowlim, minlimits_vec[-2], maxlimits_vec[-2], minlimits_vec[-1], maxlimits_vec[-1])
 			self.chains.append(ptReplica(self.NumSamples,self.folder,self.xmlinput, vis, num_communities, vec_parameters, self.realvalues, maxlimits_vec, minlimits_vec, stepratio_vec, 
-				choose_likelihood, self.swap_interval, self.simtime, c_pr_flow, c_pr_sed, self.gt_depths, self.gt_vec_d, self.gt_timelay, self.gt_vec_t, self.gt_prop_t, self.gt_prop_d,
+				choose_likelihood, self.swap_interval, self.simtime, c_pr_flow, c_pr_sed, self.gt_depths, self.gt_vec_d, self.gt_timelay, self.gt_vec_t, self.gt_prop_t, 
 				self.temperature[i], self.chain_parameters[i], self.event[i], self.wait_chain[i],burn_in))
 	
 	def run_chains (self):
@@ -759,8 +688,6 @@ class ParallelTempering:
 					result =  self.chain_parameters[j].get()
 					replica_param[j,:] = result[0:self.num_param]   
 					lhood[j] = result[self.num_param]
-
-					del result
  
  
 
@@ -791,10 +718,6 @@ class ParallelTempering:
 					param = np.concatenate([replica_param[l,:],others])
  
 					self.chain_parameters[l-1].put(param)
-
-					del para
-					del others
-					del param
 					
 				else:
 
@@ -802,6 +725,7 @@ class ParallelTempering:
 					others = np.asarray([  lhood[l-1] ])
 					para = np.concatenate([replica_param[l-1,:],others]) 
  
+				   
 					self.chain_parameters[l-1].put(para) 
 
 					others = np.asarray([  lhood[l]  ])
@@ -809,21 +733,12 @@ class ParallelTempering:
  
 					self.chain_parameters[l].put(param)
 
-					del para
-					del others
-					del param
-
-				del u
-				del swap_prob
-
-
 
 			#-------------------------------------------------------------------------------------
 			# resume suspended process
 			#-------------------------------------------------------------------------------------
 			for k in range (self.num_chains):
 					self.event[k].set()
-
 								
 
 			#-------------------------------------------------------------------------------------
@@ -835,16 +750,10 @@ class ParallelTempering:
 					count+=1
 					while self.chain_parameters[i].empty() is False:
 						dummy = self.chain_parameters[i].get()
-						del dummy
 
 			if count == self.num_chains :
 				flag_running = False
 			
-			del count
-
-			
-			gc.collect() # fLet the main threag constantly be removing files from memory
-
 
 		#-------------------------------------------------------------------------------------
 		#wait for all processes to jin the main process
@@ -876,9 +785,9 @@ class ParallelTempering:
 		plotResults.boxPlots(self.communities, pos_param, True, True, 9, 1, self.folder)
 
 		sample_range = np.arange(burnin+1,self.NumSamples+1, 1)
-		'''for s in range(self.num_param):  
+		for s in range(self.num_param):  
 			self.plot_figure(pos_param[s,:], 'pos_distri_'+str(s), self.realvalues[s], sample_range) 
-		'''
+
 		return (pos_param,likelihood_rep, accept_list,  list_predcore_t, list_predcore_d)
 
 	# Merge different MCMC chains y stacking them on top of each other
@@ -886,37 +795,15 @@ class ParallelTempering:
 
 		burnin = int(self.NumSamples * self.burn_in)
 		print('Burnin:',burnin)
-
-		
-		#file_name = self.folder + '/posterior/pos_parameters/'+filename + str(self.temperature[0]) + '.txt'
-		#dat_dummy = np.loadtxt(file_name) 
-
-		#print(dat_dummy.shape)
-
-		pos_param = np.zeros((self.num_chains, self.NumSamples -burnin, self.num_param))
-		print('Pos_param.shape:', pos_param.shape)
-		pred_t = np.zeros((self.num_chains, self.NumSamples-burnin, self.gt_vec_t.shape[0]))
-		pred_d = np.zeros((self.num_chains, self.NumSamples-burnin, self.gt_vec_d.shape[0]))
-
-		print('pred_t:',pred_t,'pred_t.shape:', pred_t.shape)
-		print('gt_prop_t.shape:',self.gt_prop_t.shape)
-
-		file_name = self.folder + '/posterior/pos_likelihood/'+filename + str(self.temperature[0]) + '.txt'
-		dat = np.loadtxt(file_name) 
-		likelihood_rep = np.zeros((self.num_chains, dat.shape[0]-burnin, 2 )) # index 1 for likelihood posterior and index 0 for Likelihood proposals. Note all likilihood proposals plotted only
-		
-		'''
-		pos_param = np.zeros((self.num_chains, self.NumSamples - burnin , self.num_param))
+		pos_param = np.zeros((self.num_chains, self.NumSamples - burnin, self.num_param))
 		print('Pos_param.shape:', pos_param.shape)
 		pred_t = np.zeros((self.num_chains, self.NumSamples - burnin, self.gt_vec_t.shape[0]))
 		pred_d = np.zeros((self.num_chains, self.NumSamples - burnin, self.gt_vec_d.shape[0]))
+
 		print('pred_t:',pred_t,'pred_t.shape:', pred_t.shape)
 		print('gt_prop_t.shape:',self.gt_prop_t.shape)
-		
  
 		likelihood_rep = np.zeros((self.num_chains, self.NumSamples - burnin, 2 )) # index 1 for likelihood posterior and index 0 for Likelihood proposals. Note all likilihood proposals plotted only
-		'''
-
 		accept_percent = np.zeros((self.num_chains, 1))
 
 		accept_list = np.zeros((self.num_chains, self.NumSamples )) 
@@ -926,7 +813,7 @@ class ParallelTempering:
 			dat = np.loadtxt(file_name) 
 			print('dat.shape:',dat.shape) 
 			pos_param[i, :, :] = dat[burnin:,:]
-			
+   			
 			file_name = self.folder + '/posterior/predicted_core/pos_samples_t/chain_'+  str(self.temperature[i]) + '.txt'
 			dat = np.loadtxt(file_name)
 			pred_t[i, :, :] = dat[burnin:,:] 
@@ -950,7 +837,7 @@ class ParallelTempering:
 		likelihood_vec = likelihood_rep.transpose(2,0,1).reshape(2,-1) 
 		posterior = pos_param.transpose(2,0,1).reshape(self.num_param,-1)
 		list_predcore_t = pred_t.transpose(2,0,1).reshape(self.gt_vec_t.shape[0],-1)
-		list_predcore_d = pred_d.transpose(2,0,1).reshape(self.gt_vec_d.shape[0],-1)
+ 		list_predcore_d = pred_d.transpose(2,0,1).reshape(self.gt_vec_d.shape[0],-1)
 
 		# list_predcore = pred_core.transpose(2,0,1).reshape(self.gt_prop_t.shape[0],-1)
 		accept = np.sum(accept_percent)/self.num_chains
@@ -973,8 +860,8 @@ class ParallelTempering:
 	def get_optimal(self, likelihood_rep, pos_param): 
 
 		likelihood_pos = likelihood_rep[:,1]
-		
-		# Find 5th and 95th percentile of a posterior
+ 		
+ 		# Find 5th and 95th percentile of a posterior
 		a = np.percentile(likelihood_pos, 5)   
 		# Find nearest value of 5th/95th percentiles in posterior likelihood 
 		lhood_5thpercentile, index_5th = self.find_nearest(likelihood_pos,a)  
@@ -1064,27 +951,9 @@ class ParallelTempering:
 		ax2 = fig.add_subplot(212)
 
 		list_points = np.asarray(np.split(list_points,  self.num_chains ))
-
-		print("------------------------------------------------------------")
-		print("------------------------------------------------------------")
-		print("------------------------------------------------------------")
-		print( sample_range)
-		print("------------------------------------------------------------")
-		print("------------------------------------------------------------")
-		print("------------------------------------------------------------")
-		print("------------------------------------------------------------")
-		print (list_points.T)
-		print("------------------------------------------------------------")
-		print("------------------------------------------------------------")
-		print("------------------------------------------------------------")
-
-		print('sample_range shape', sample_range.shape)
-
-		print('list_points.T shape', list_points.T.shape)
  
-		print("------------------------------------------------------------")
-		print("------------------------------------------------------------")
 
+ 
 
 		ax2.set_facecolor('#f2f2f3') 
 		ax2.plot(sample_range, list_points.T , label=None)
@@ -1125,10 +994,10 @@ def find_limits(communities, num_sed, num_flow, sedlim, flowlim,  min_a, max_a, 
 	return   maxlimits_vec, minlimits_vec
 
 def initial_vec(communities, num_sed, num_flow, sedlim, flowlim, min_a, max_a, min_m, max_m):
-	print('communities',communities)
-	print('num_sed',num_sed)
-	print('num_flow',num_flow)
-	print('sedlim',sedlim,'flowlim',flowlim,'min_a',min_a, 'max a',max_a,'min m',min_m,'max m', max_m)
+ 	print('communities',communities)
+ 	print('num_sed',num_sed)
+ 	print('num_flow',num_flow)
+ 	print('sedlim',sedlim,'flowlim',flowlim,'min_a',min_a, 'max a',max_a,'min m',min_m,'max m', max_m)
 
 	sed1 = np.empty(communities)
 	sed2 = np.empty(communities)
@@ -1200,19 +1069,15 @@ def main():
 	# PT is a multicore implementation must num_chains >= 2
 	# Choose a value less than the numbe of core available (avoid context swtiching)
 	#-------------------------------------------------------------------------------------
-	samples = 2000   # total number of samples by all the chains (replicas) in parallel tempering
-	num_chains = 10 # number of Replica's that will run on separate cores. Note that cores will be shared automatically - if enough cores not available
-	  
-	burn_in = 0.4  
-
-
-	
-
+	samples = 60 # total number of samples by all the chains (replicas) in parallel tempering
+	num_chains = 6 # number of Replica's that will run on separate cores. Note that cores will be shared automatically - if enough cores not available
+	swap_ratio = 0.1    #adapt these 
+	burn_in = 0.1  
 
 	#parameters for Parallel Tempering
-	maxtemp = 3  
+	maxtemp = 5 #int(num_chains * 5)/2
 	
-	swap_interval =  5 #int(swap_ratio * (samples/num_chains)) #how ofen you swap neighbours
+	swap_interval =   int(swap_ratio * (samples/num_chains)) #how ofen you swap neighbours
 	print('swap_interval:',swap_interval)
 
 
@@ -1237,58 +1102,19 @@ def main():
 		stepratio_vec =  np.repeat(stepsize_ratio, maxlimits_vec.size) 
 		num_param = maxlimits_vec.size 
 
+		true_vec_parameters = np.loadtxt('SyntheticProblem/data/true_param.txt')
 		problemfolder = 'SyntheticProblem/'  # change for other reef-core (This is synthetic core) 
-
-		true_vec_parameters = np.loadtxt(problemfolder +'data_new/core_3asemb/true_values.txt')
-
-
-		#synthdata_depthdata_3assem
-
-
-
-		'''gt_depths, gt_vec_d = np.genfromtxt(problemfolder +'data/synthdata_d_vec.txt', usecols=(0,1), unpack=True)
-		synth_data = problemfolder +'data/synthdata_t_prop.txt'
-		gt_prop_t = np.loadtxt(synth_data, usecols=(1,2,3,4,5)) 
-		synth_vec = problemfolder +'data/synthdata_t_vec.txt'
-		gt_timelay, gt_vec_t = np.genfromtxt(synth_vec, usecols=(0, 1), unpack = True)
-		gt_timelay = gt_timelay[::-1]'''
 
 	else:
 		print('Choose a problem.\n\t1. Testing (Synthetic), 2. Heron Reef, 3. One Tree Reef')
 
-
-
-
-	xmlinput = problemfolder + 'input_synth.xml' 
-
-	coredata_depthprop = problemfolder +'data_new/core_3asemb/synth_core_prop_d_08.txt' # depth structure  propotions
-
-	coredata_depthid = problemfolder +'data_new/core_3asemb/synth_core_vec_d_08.txt' # depth structure id
-
-	coredata_timeid = problemfolder +'data_new/core_3asemb/synthdata_t_vec_08_1.txt' # time structure id
-
-	coredata_timeprop = problemfolder +'data_new/core_3asemb/synthdata_t_prop_08_1.txt' # time structure propotions
-
-	
-
-	gt_depths, gt_vec_d = np.genfromtxt(coredata_depthid, usecols=(0,1), unpack=True)
- 
-	gt_timelay, gt_vec_t = np.genfromtxt(coredata_timeid, usecols=(0, 1), unpack = True)
-	gt_prop_d = np.loadtxt(coredata_depthprop, usecols=(1,2,3,4))
-	gt_prop_t = np.loadtxt(coredata_timeprop, usecols=(1,2,3,4))
+	xmlinput = problemfolder + 'input_synth.xml'
+	gt_depths, gt_vec_d = np.genfromtxt(problemfolder +'data/synthdata_d_vec.txt', usecols=(0,1), unpack=True)
+	synth_data = problemfolder +'data/synthdata_t_prop.txt'
+	gt_prop_t = np.loadtxt(synth_data, usecols=(1,2,3,4,5)) 
+	synth_vec = problemfolder +'data/synthdata_t_vec.txt'
+	gt_timelay, gt_vec_t = np.genfromtxt(synth_vec, usecols=(0, 1), unpack = True)
 	gt_timelay = gt_timelay[::-1]
-
-	
-	print(gt_depths, ' gt depths')
-	print(gt_vec_d, ' gt_vec_d') 
-
-	print(gt_timelay, ' gt_timelay') 
-	print(gt_vec_t, ' gt_vec_t')
-
-	print(gt_prop_d, ' gt_prop_d')
-
-
-
 
 	# datafile = problemfolder + 'data/synth_core_vec.txt'
 	# core_depths, data_vec = np.genfromtxt(datafile, usecols=(0, 1), unpack = True) 
@@ -1320,10 +1146,7 @@ def main():
 	#-------------------------------------------------------------------------------------
 	timer_start = time.time()
 
-
-	#synthdata_depthdata_3assem
-
-	pt = ParallelTempering(num_chains,num_communities, samples,fname,xmlinput,num_param,maxtemp,swap_interval,simtime, true_vec_parameters,gt_depths, gt_vec_d, gt_timelay, gt_vec_t, gt_prop_t, gt_prop_d)
+	pt = ParallelTempering(num_chains,num_communities, samples,fname,xmlinput,num_param,maxtemp,swap_interval,simtime, true_vec_parameters,gt_depths, gt_vec_d, gt_timelay, gt_vec_t, gt_prop_t)
 	 
 	pt.initialise_chains(vis, num_communities, num_sed, num_flow, sedlim, flowlim, maxlimits_vec, minlimits_vec , stepratio_vec, choose_likelihood, burn_in)
 	#-------------------------------------------------------------------------------------
@@ -1355,7 +1178,6 @@ def main():
 	plt.savefig( fname+'/likelihood.png')
 	plt.clf()
 
-	'''
 	adj_acceptlist = accept_list +1
 	plt.plot(sample_range, adj_acceptlist.T)
 	plt.title('Acceptance through time', size=font)
@@ -1363,9 +1185,9 @@ def main():
 	plt.ylabel('Samples', size=font)
 	plt.xlim(np.amin(sample_range),np.amax(sample_range))
 	plt.savefig( fname+'/accept_list.png')
-	plt.close()
+ 	plt.close()
  
-	'''
+	
 	print ('Time taken  in minutes = ', (timer_end-timer_start)/60)
 	np.savetxt(fname+'/time_sqerror.txt',[ (timer_end-timer_start)/60], fmt='%1.2f'  )
 
@@ -1382,4 +1204,4 @@ def main():
 	plt.close(0)
 
 	#stop()
-if __name__ == "__main__": main() 
+if __name__ == "__main__": main()

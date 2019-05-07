@@ -109,7 +109,7 @@
 			- second column: the sea-level position for the considered time [m]
 			 For any given time in the simulation the sea-level is obtained by linear interpolation
 		-->
-		<curve>SyntheticProblem/data/slossetal_8500.txt</curve>
+		<curve>SyntheticProblem/data_new/slossetal_8500.txt</curve>
 	</sea>
 
 	<!-- Ocean flow structure
