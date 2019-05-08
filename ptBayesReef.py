@@ -31,6 +31,8 @@ from pyReefCore import plotResults
 from cycler import cycler
 from scipy import stats 
 
+import sys
+
 from sys import getsizeof
 
 cmap=plt.cm.Set2
@@ -104,6 +106,7 @@ class ptReplica(multiprocessing.Process):
 		self.gt_prop_d = gt_prop_d
 
 		self.temperature = tempr
+		self.adapttemp  = tempr
 		self.processID = tempr      
 		self.parameter_queue = parameter_queue
 		self.event = event
@@ -216,7 +219,7 @@ class ptReplica(multiprocessing.Process):
 		sim_vec_d = self.convertCoreFormat(sim_prop_d)
 		sim_vec_t = self.convertCoreFormat(sim_prop_t)
 		# rmse = self.rmse(sim_prop_t5, gt_prop_d)
-		return [likelihood, diff, sim_prop_d, sim_vec_d, sim_vec_t]
+		return [likelihood *(1.0/self.adapttemp) , diff, sim_prop_d, sim_vec_d, sim_vec_t]
 		   
 	def likelihoodWithDominance(self, reef, gt_prop_t, input_v):  #time_structure in lhood
 		sim_data_t, sim_data_d, sim_timelay = self.runModel(reef, input_v)
@@ -236,7 +239,7 @@ class ptReplica(multiprocessing.Process):
 		# rmse = self.rmse(sim_data_t5, gt_prop_t)
 		sim_vec_t = self.convertCoreFormat(sim_data_t5)
 		sim_vec_d = self.convertCoreFormat(sim_data_d.T)
-		return [likelihood, diff, sim_data_t5, sim_data_d.T, sim_vec_t, sim_vec_d]
+		return [likelihood *(1.0/self.adapttemp), diff, sim_data_t5, sim_data_d.T, sim_vec_t, sim_vec_d]
 
 	def proposalJump(self, current, low_limit, high_limit, jump_width):
 		proposal = current + np.random.normal(0, jump_width)
@@ -250,6 +253,10 @@ class ptReplica(multiprocessing.Process):
 		# Note this is a chain that is distributed to many cores. The chain is also known as Replica in Parallel Tempering
 		
 		samples = self.samples
+
+		pt_samples = (self.samples * 0.4)
+
+
 		sedlim = [self.minlimits_vec[0], float(self.maxlimits_vec[0])]
 		flowlim = [self.minlimits_vec[12], float(self.maxlimits_vec[12])]
 
@@ -349,8 +356,22 @@ class ptReplica(multiprocessing.Process):
 		
 		print('Begin sampling using MCMC random walk')
 		b = 0
+
+		init_count = 0
 		
 		for i in range(samples-1):
+
+
+			if i < pt_samples:
+				self.adapttemp =  self.temperature #* ratio  #
+
+			if i == pt_samples and init_count ==0: # move to MCMC canonical
+				self.adapttemp = 1
+				'''if self.lhood_timestructure == True:
+					[likelihood_proposal, diff, sim_pred_t, sim_pred_d, sim_vec_t, sim_vec_d] = self.likelihoodWithDependence(reef, v_proposal, S_star, cps_star, ca_props_star)
+				else: # use lhood_depthstructure
+					[likelihood_proposal, diff, sim_prop_d, sim_vec_d, sim_vec_t] = self.likelihoodWithProps(reef, gt_prop_d, v_proposal)'''
+				init_count = 1
 
 
 
@@ -359,7 +380,7 @@ class ptReplica(multiprocessing.Process):
 			idx_sed = int((num_param-3)/2)
 			#print(idx_sed, num_param, '  +++++++++++ ' )
 
-			print(self.realvalues_vec, ' self.realvalues_vec')
+			#print(self.realvalues_vec, ' self.realvalues_vec')
 
 
 
@@ -428,8 +449,15 @@ class ptReplica(multiprocessing.Process):
 				v_proposal = np.concatenate((p_sed1,p_sed2,p_sed3,p_sed4,p_flow1,p_flow2,p_flow3,p_flow4))
 			v_proposal = np.append(v_proposal,(p_ax,p_ay,p_m))
 
+			#print(v_proposal, ' v_proposal')
 
-			#v_proposal[0:24] = self.realvalues_vec[0:24]
+			#print(self.realvalues_vec, ' self.realvalues_vec')
+
+
+			#v_proposal[0:26] = self.realvalues_vec[0:26]
+
+			#print(v_proposal, ' v_proposal ***')
+
 
 			# print('Sample:', i, ',v_proposal:', v_proposal)
 			# Passing paramters to calculate likelihood and diff score
@@ -494,18 +522,18 @@ class ptReplica(multiprocessing.Process):
 				#print(v_proposal)
 				likelihood = likelihood_proposal 
 				pos_likl[i + 1,1]=likelihood  # contains  all proposal liklihood (accepted and rejected ones) 
-				pos_param[b+1,:] = v_current # features rain, erodibility and others  (random walks is only done for this vector) 
-				pos_samples_t[b+1,:] =  sim_vec_t # make a list of core predictions
-				pos_samples_d[b+1,:] =  sim_vec_d
+				pos_param[i+1,:] = v_current # features rain, erodibility and others  (random walks is only done for this vector) 
+				pos_samples_t[i+1,:] =  sim_vec_t # make a list of core predictions
+				pos_samples_d[i+1,:] =  sim_vec_d
 				c_pr_flow = p_pr_flow
 				c_pr_sed = p_pr_sed  
 
 			else: # Reject sample
-				b = i
+				#b = i
 				pos_likl[i + 1, 1] = pos_likl[i,1]  
-				pos_param[b+1,:] = pos_param[i,:] 
-				pos_samples_t[b+1,:] = pos_samples_t[i,:] 
-				pos_samples_d[b+1,:] = pos_samples_t[i,:] 
+				pos_param[i+1,:] = pos_param[i,:] 
+				pos_samples_t[i+1,:] = pos_samples_t[i,:] 
+				pos_samples_d[i+1,:] = pos_samples_d[i,:] 
  
 
 			
@@ -547,29 +575,7 @@ class ptReplica(multiprocessing.Process):
 			
 
 			#----------------------------------------------------------------------------------------
-			if ( i % self.swap_interval == 0 ): 
-			#if ( i % 2 == 0 ): 
-
-				'''if i> burnsamples and self.runninghisto == True:
-					hist, bin_edges = np.histogram(pos_param[burnsamples:i,0], density=True)
-					plt.hist(pos_param[burnsamples:i,0], bins='auto')  # arguments are passed to np.histogram
-					plt.title("Parameter 1 Histogram")
-
-					file_name = self.filename + '/posterior/pos_parameters/hist_current' + str(self.temperature)
-					plt.savefig(file_name+'_0.png')
-					plt.close()
-
-					np.savetxt(file_name+'.txt',  pos_param[ :i,:] ,  fmt='%1.9f')
-
-					hist, bin_edges = np.histogram(pos_param[burnsamples:i,1], density=True)
-					plt.hist(pos_param[burnsamples:i,1], bins='auto')  # arguments are passed to np.histogram
-					plt.title("Parameter 2 Histogram")
- 
-					plt.savefig(file_name + '_1.png')
-					plt.close()
-
-					del hist
-					del bin_edges'''
+			if ( i % self.swap_interval == 0 ):  
 
  
 				others = np.asarray([likelihood])
@@ -682,23 +688,127 @@ class ParallelTempering:
 		# Create queues for transfer of parameters between process chain
 		self.chain_parameters = [multiprocessing.Queue() for i in range(0, self.num_chains) ]
 
+		self.geometric =  True
+
 		# Two ways events are used to synchronise chains
 		self.event = [multiprocessing.Event() for i in range (self.num_chains)]
 		self.wait_chain = [multiprocessing.Event() for i in range (self.num_chains)]
  
-	# Assign temperature dynamically   
-	def assign_temptarures(self):
+	# Assign temperature dynamically 
+
+
+	def default_beta_ladder(self, ndim, ntemps, Tmax): #https://github.com/konqr/ptemcee/blob/master/ptemcee/sampler.py
+		"""
+		Returns a ladder of :math:`\beta \equiv 1/T` under a geometric spacing that is determined by the
+		arguments ``ntemps`` and ``Tmax``.  The temperature selection algorithm works as follows:
+		Ideally, ``Tmax`` should be specified such that the tempered posterior looks like the prior at
+		this temperature.  If using adaptive parallel tempering, per `arXiv:1501.05823
+		<http://arxiv.org/abs/1501.05823>`_, choosing ``Tmax = inf`` is a safe bet, so long as
+		``ntemps`` is also specified.
+		
+		"""
+
+		if type(ndim) != int or ndim < 1:
+			raise ValueError('Invalid number of dimensions specified.')
+		if ntemps is None and Tmax is None:
+			raise ValueError('Must specify one of ``ntemps`` and ``Tmax``.')
+		if Tmax is not None and Tmax <= 1:
+			raise ValueError('``Tmax`` must be greater than 1.')
+		if ntemps is not None and (type(ntemps) != int or ntemps < 1):
+			raise ValueError('Invalid number of temperatures specified.')
+
+		tstep = np.array([25.2741, 7., 4.47502, 3.5236, 3.0232,
+						2.71225, 2.49879, 2.34226, 2.22198, 2.12628,
+						2.04807, 1.98276, 1.92728, 1.87946, 1.83774,
+						1.80096, 1.76826, 1.73895, 1.7125, 1.68849,
+						1.66657, 1.64647, 1.62795, 1.61083, 1.59494,
+						1.58014, 1.56632, 1.55338, 1.54123, 1.5298,
+						1.51901, 1.50881, 1.49916, 1.49, 1.4813,
+						1.47302, 1.46512, 1.45759, 1.45039, 1.4435,
+						1.4369, 1.43056, 1.42448, 1.41864, 1.41302,
+						1.40761, 1.40239, 1.39736, 1.3925, 1.38781,
+						1.38327, 1.37888, 1.37463, 1.37051, 1.36652,
+						1.36265, 1.35889, 1.35524, 1.3517, 1.34825,
+						1.3449, 1.34164, 1.33847, 1.33538, 1.33236,
+						1.32943, 1.32656, 1.32377, 1.32104, 1.31838,
+						1.31578, 1.31325, 1.31076, 1.30834, 1.30596,
+						1.30364, 1.30137, 1.29915, 1.29697, 1.29484,
+						1.29275, 1.29071, 1.2887, 1.28673, 1.2848,
+						1.28291, 1.28106, 1.27923, 1.27745, 1.27569,
+						1.27397, 1.27227, 1.27061, 1.26898, 1.26737,
+						1.26579, 1.26424, 1.26271, 1.26121,
+						1.25973])
+
+		if ndim > tstep.shape[0]:
+			# An approximation to the temperature step at large
+			# dimension
+			tstep = 1.0 + 2.0*np.sqrt(np.log(4.0))/np.sqrt(ndim)
+		else:
+			tstep = tstep[ndim-1]
+
+		appendInf = False
+		if Tmax == np.inf:
+			appendInf = True
+			Tmax = None
+			ntemps = ntemps - 1
+
+		if ntemps is not None:
+			if Tmax is None:
+				# Determine Tmax from ntemps.
+				Tmax = tstep ** (ntemps - 1)
+		else:
+			if Tmax is None:
+				raise ValueError('Must specify at least one of ``ntemps'' and '
+								'finite ``Tmax``.')
+
+			# Determine ntemps from Tmax.
+			ntemps = int(np.log(Tmax) / np.log(tstep) + 2)
+
+		betas = np.logspace(0, -np.log10(Tmax), ntemps)
+		if appendInf:
+			# Use a geometric spacing, but replace the top-most temperature with
+			# infinity.
+			betas = np.concatenate((betas, [0]))
+
+		return betas
+		
+		
+	def assign_temperatures(self):
+		# #Linear Spacing
+		# temp = 2
+		# for i in range(0,self.num_chains):
+		#   self.temperatures.append(temp)
+		#   temp += 2.5 #(self.maxtemp/self.num_chains)
+		#   print (self.temperatures[i])
+		#Geometric Spacing
+
+		if self.geometric == True:
+			betas = self.default_beta_ladder(2, ntemps=self.num_chains, Tmax=self.maxtemp)      
+			for i in range(0, self.num_chains):         
+				self.temperature.append(np.inf if betas[i] is 0 else 1.0/betas[i])
+				print (self.temperature[i])
+		else:
+
+			tmpr_rate = (self.maxtemp /self.num_chains)
+			temp = 1
+			print("Temperatures...")
+			for i in xrange(0, self.num_chains):            
+				self.temperatures.append(temp)
+				temp += tmpr_rate
+				print(self.temperature[i])
+
+	'''def assign_temptarures(self):
 		tmpr_rate = (self.maxtemp /self.num_chains)
 		temp = 1
 		for i in xrange(0, self.num_chains):            
 			self.temperature.append(temp)
 			temp += tmpr_rate
-			print('self.temperature[%s]' % i,self.temperature[i])
+			print('self.temperature[%s]' % i,self.temperature[i])'''
 			 
 	def initialise_chains (self, vis, num_communities, num_sed, num_flow, sedlim, flowlim, maxlimits_vec, minlimits_vec , stepratio_vec,  choose_likelihood,   burn_in):
 		self.burn_in = burn_in
 
-		self.assign_temptarures()
+		self.assign_temperatures()
 		for i in xrange(0, self.num_chains):
 			vec_parameters, c_pr_flow, c_pr_sed = initial_vec(num_communities, num_sed, num_flow, sedlim, flowlim, minlimits_vec[-2], maxlimits_vec[-2], minlimits_vec[-1], maxlimits_vec[-1])
 			self.chains.append(ptReplica(self.NumSamples,self.folder,self.xmlinput, vis, num_communities, vec_parameters, self.realvalues, maxlimits_vec, minlimits_vec, stepratio_vec, 
@@ -1195,29 +1305,43 @@ def main():
 
 	random.seed(time.time()) 
 
+
+	if(len(sys.argv)!=5):
+		sys.exit('not right input format.  ')
+
+
+
+	problem = int(sys.argv[1])  # get input
+
+	num_chains = int(sys.argv[2])
+
+	swap_interval = int(sys.argv[3])
+
+	samples = int(sys.argv[4])
+
+	print (problem, num_chains,   swap_interval)
+
 	#-------------------------------------------------------------------------------------
 	# Number of chains of MCMC required to be run
 	# PT is a multicore implementation must num_chains >= 2
 	# Choose a value less than the numbe of core available (avoid context swtiching)
 	#-------------------------------------------------------------------------------------
-	samples = 2000   # total number of samples by all the chains (replicas) in parallel tempering
-	num_chains = 10 # number of Replica's that will run on separate cores. Note that cores will be shared automatically - if enough cores not available
+	#samples = 5000    # total number of samples by all the chains (replicas) in parallel tempering
+	#num_chains = 10 # number of Replica's that will run on separate cores. Note that cores will be shared automatically - if enough cores not available
 	  
-	burn_in = 0.4  
+	burn_in = 0.3  
 
 
 	
 
 
 	#parameters for Parallel Tempering
-	maxtemp = 3  
+	maxtemp = 2 
 	
-	swap_interval =  5 #int(swap_ratio * (samples/num_chains)) #how ofen you swap neighbours
-	print('swap_interval:',swap_interval)
-
+	 
 
 	choose_likelihood = 1 # 1 for Multinomial, 2 for Gaussian Likilihood
-	problem = 1 # problem = input("Which problem do you want to choose? \n\t1. Testing (Synthetic, 2. Heron  3. OneTreeReef")
+	# problem = input("Which problem do you want to choose? \n\t1. Testing (Synthetic, 2. Heron  3. OneTreeReef")
 	
 	if problem == 1:
 		num_communities = 3 # can be 6 for real probs
