@@ -22,7 +22,7 @@ __MACOSX
 doc/_build/
 tags
 doc/env/
-*tect*
+*tect/uplift*
 
 *results_* 
  
