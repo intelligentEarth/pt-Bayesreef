@@ -251,8 +251,12 @@ class ptReplica(multiprocessing.Process):
 
 	def run(self):
 		# Note this is a chain that is distributed to many cores. The chain is also known as Replica in Parallel Tempering
+
+		
 		
 		samples = self.samples
+
+		num_iterations =  samples 
 
 		pt_samples = (self.samples * 0.4)
 
@@ -317,16 +321,16 @@ class ptReplica(multiprocessing.Process):
 		#---------------------------------------
 		# Create memory to save all the accepted proposals of parameters, model predictions and likelihood
 
-		pos_param = np.empty((samples,v_current.size))   
+		pos_param = np.empty((num_iterations,v_current.size))   
 		pos_param[0,:] = v_proposal # assign first proposal
 
-		pos_samples_t = np.empty((samples, sim_vec_t.size)) # list of all accepted (plus repeats) of pred cores  
+		pos_samples_t = np.empty((num_iterations, sim_vec_t.size)) # list of all accepted (plus repeats) of pred cores  
 		pos_samples_t[0,:] = sim_vec_t # assign the first core pred
 
-		pos_samples_d = np.empty((samples, sim_vec_d.size)) # list of all accepted (plus repeats) of pred cores  
+		pos_samples_d = np.empty((num_iterations, sim_vec_d.size)) # list of all accepted (plus repeats) of pred cores  
 		pos_samples_d[0,:] = sim_vec_d # assign the first core pred
 		
-		pos_likl = np.empty((samples, 2)) # one for posterior of likelihood and the other for all proposed likelihood
+		pos_likl = np.empty((num_iterations, 2)) # one for posterior of likelihood and the other for all proposed likelihood
 		pos_likl[0,:] = [-10000, -10000] # to avoid prob in calc of 5th and 95th percentile later
 
 		# Created to account for asymmetrical proposals 
@@ -340,7 +344,7 @@ class ptReplica(multiprocessing.Process):
 		#----------------------------------------------------------------------------
 
 		count_list.append(0) # To count number of accepted for each chain (replica)
-		accept_list = np.empty(samples)
+		accept_list = np.empty(num_iterations)
 		start = time.time() 
 		num_accepted = 0
 		
@@ -357,15 +361,45 @@ class ptReplica(multiprocessing.Process):
 		print('Begin sampling using MCMC random walk')
 		#b = 0
 
-		init_count = 0
+		num_groups = 7
+
+
 		
-		for i in range(samples-1):
+
+		init_count = 0
+
+		block_size = 4
+		num_blocks = 3
+
+		sed_group = np.empty((num_blocks,block_size))
+		flow_group = np.empty((num_blocks,block_size))
+		sed_flow = np.empty((num_blocks*2,block_size))
+
+		id_sedflow = np.array([[0, 3, 6, 9],
+       						[1, 4, 7, 10],
+       						[2, 5, 8, 11],
+       						[12, 15, 18, 21],
+       						[13, 16, 19, 22],
+       						[14, 17, 20, 23]])
 
 
-			if i < pt_samples:
+
+				#[0, 3, 6, 9]
+				#[1, 4, 7, 10]
+				#[2, 5, 8, 11]
+				# [12, 15, 18, 21]
+				# [13, 16, 19, 22]
+				# [14, 17, 20, 23]
+
+		
+		
+		for samp in range(samples-1):
+
+
+			if samp < pt_samples:
 				self.adapttemp =  self.temperature #* ratio  #
 
-			if i == pt_samples and init_count ==0: # move to MCMC canonical
+			if samp == pt_samples and init_count ==0: # move to MCMC canonical
 				self.adapttemp = 1
 				'''if self.lhood_timestructure == True:
 					[likelihood_proposal, diff, sim_pred_t, sim_pred_d, sim_vec_t, sim_vec_d] = self.likelihoodWithDependence(reef, v_proposal, S_star, cps_star, ca_props_star)
@@ -374,10 +408,17 @@ class ptReplica(multiprocessing.Process):
 				init_count = 1
 
 
+			#for g in range(num_groups): 
 
-			#print (' Sample : ', i, 'accepted ',num_accepted,'Temp           xxxxxxxxxxxxxxxxxxx:',self.temperature)
 
-			idx_sed = int((num_param-3)/2)
+
+
+
+
+
+
+			print (' Sample : ', samp, 'accepted ',num_accepted,'Temp           xxxxxxxxxxxxxxxxxxx:',self.temperature)
+
 			#print(idx_sed, num_param, '  +++++++++++ ' )
 
 			#print(self.realvalues_vec, ' self.realvalues_vec')
@@ -389,6 +430,8 @@ class ptReplica(multiprocessing.Process):
 
 			#init_pro = np.concatenate((sed1,sed2,sed3,sed4,flow1,flow2,flow3,flow4))
 			#init_pro = np.append(init_pro,(cm_ax,cm_ay,m)) 
+
+			idx_sed = int((num_param-3)/2)
 
 
 			tmat = v_current[:idx_sed].reshape(4,communities)
@@ -441,102 +484,155 @@ class ptReplica(multiprocessing.Process):
 			p_m = self.proposalJump(v_current[-1], self.minlimits_vec[v_id], self.maxlimits_vec[v_id], stepsize_vec[v_id])
 
 			v_proposal = []
-			if (self.sedsim == True) and (self.flowsim == False):
+			'''if (self.sedsim == True) and (self.flowsim == False):
 				v_proposal = np.concatenate((p_sed1,p_sed2,p_sed3,p_sed4))
 			elif (self.flowsim == True) and (self.sedsim == False):
 				v_proposal = np.concatenate((p_flow1,p_flow2,p_flow3,p_flow4))
-			elif (self.sedsim == True) and (self.flowsim == True):
-				v_proposal = np.concatenate((p_sed1,p_sed2,p_sed3,p_sed4,p_flow1,p_flow2,p_flow3,p_flow4))
-			v_proposal = np.append(v_proposal,(p_ax,p_ay,p_m))
+			elif (self.sedsim == True) and (self.flowsim == True):'''
+			for i in range(num_blocks):
+				sed_group[i,:] = np.array([p_sed1[i],p_sed2[i],p_sed3[i],p_sed4[i]])
+				#print(xxx, ' xxx')
+				#sed_group[i,:] = np.concatenate(([p_sed1[i],p_sed2[i],p_sed3[i],p_sed4[i]]))
 
-			#print(v_proposal, ' v_proposal')
+			for i in range(num_blocks):
+				flow_group[i,:] = np.array([p_flow1[i],p_flow2[i],p_flow3[i],p_flow4[i]])
 
-			#print(self.realvalues_vec, ' self.realvalues_vec')
+			glv_group = np.array([p_ax,p_ay,p_m])
 
+			'''print(sed_group, ' sed_group')
+			print(flow_group, ' flow_group')
+			print(glv_group, ' glv_group')'''
 
-			v_proposal[0:25] = self.realvalues_vec[0:25]
+			sed_flow[0:3,:] = sed_group 
+			sed_flow[3:6,:] = flow_group
 
-			#print(v_proposal, ' v_proposal ***')
+			#print(sed_flow, ' sed_flow .....  ')
+ 
 
+			for gx in range(0, num_groups):
 
-			# print('Sample:', i, ',v_proposal:', v_proposal)
-			# Passing paramters to calculate likelihood and diff score
+				#print(samp, gx,  '---------------------------------------- +++++++++++ ~~~~~~~~~~~~~~~')
 
-			if self.lhood_timestructure == True:
-				[likelihood_proposal, diff, sim_pred_t, sim_pred_d, sim_vec_t, sim_vec_d] = self.likelihoodWithDependence(reef, v_proposal, S_star, cps_star, ca_props_star)
+			 
+				temp_proposal = v_current.copy()
 
-			else: # use lhood_depthstructure
-				[likelihood_proposal, diff, sim_prop_d, sim_vec_d, sim_vec_t] = self.likelihoodWithProps(reef, gt_prop_d, v_proposal)
-
-			#del diff 
-			#del sim_pred_d
-			#del sim_pred_t
-
-
-			# Difference in likelihood from previous accepted proposal
-			diff_likelihood = likelihood_proposal - likelihood
-			#print (i, '\tLikelihood proposal:', likelihood_proposal)
-			#print('\n\tDifference in likelihood proposals:', diff_likelihood)
-
-			for c in range(communities):
-				p_pr_flow2[c] = flowlim[1] - p_flow1[c]
-				p_pr_flow3[c] = flowlim[1] - p_flow2[c]
-				p_pr_flow4[c] = flowlim[1] - p_flow3[c]
-				p_pr_sed2[c] = sedlim[1] - p_sed1[c]
-				p_pr_sed3[c] = sedlim[1] - p_sed2[c]
-				p_pr_sed4[c] = sedlim[1] - p_sed3[c]
-			all_flow_pr = np.array([p_pr_flow2,p_pr_flow3,p_pr_flow4])
-			p_pr_flow = np.prod(all_flow_pr)
-			all_sed_pr = np.array([p_pr_sed2,p_pr_sed3,p_pr_sed4])
-			p_pr_sed = np.prod(all_sed_pr)
+				if gx == 6: 
+					temp_proposal[24:] = glv_group
+				else:
+					for k in range(block_size):
+						index = id_sedflow[gx,k] 
+						temp_proposal[index] = sed_flow[gx,k]
+ 
 
 
 
-			log_pr_flow_p = np.log(p_pr_flow)
-			log_pr_sed_p = np.log(p_pr_sed)
-			log_pr_flow_c = np.log(c_pr_flow)
-			log_pr_sed_c = np.log(c_pr_sed)
-			log_pr_p = log_pr_flow_p+log_pr_sed_p
-			log_pr_c = log_pr_flow_c+log_pr_sed_c
-			log_pr_diff = log_pr_p - log_pr_c
 
-			# print('log_pr_diff', log_pr_diff)
 
-			try:
-				mh_prob = min(1, math.exp(diff_likelihood))
-			except OverflowError as e:
-				mh_prob = 1
+				v_proposal = temp_proposal  #np.concatenate((p_sed1,p_sed2,p_sed3,p_sed4,p_flow1,p_flow2,p_flow3,p_flow4))
+				#v_proposal = #np.append(v_proposal,(p_ax,p_ay,p_m)) 
 
-			u = random.uniform(0,1)
 
-			#print('u:', u, 'MH probability:', mh_prob)
-			#print((i % self.swap_interval), i,  self.swap_interval, 'mod swap')
+				if self.lhood_timestructure == True:
+					[likelihood_proposal, diff, sim_pred_t, sim_pred_d, sim_vec_t, sim_vec_d] = self.likelihoodWithDependence(reef, v_proposal, S_star, cps_star, ca_props_star)
 
-			pos_likl[i+1,0] = likelihood_proposal
-			if u < mh_prob: # Accept sample
-				#b = b+1
-				print ('Accepted Sample',i, ' \n\tLikelihood ', likelihood_proposal,'\n\tTemperature:', self.temperature,'\n\t  accepted, sample, diff ----------------->:', num_accepted,  diff)
-				count_list.append(i)            # Append sample number to accepted list
-				num_accepted = num_accepted + 1 
-				accept_list[i+1] = num_accepted
+				else: # use lhood_depthstructure
+					[likelihood_proposal, diff, sim_prop_d, sim_vec_d, sim_vec_t] = self.likelihoodWithProps(reef, gt_prop_d, v_proposal)
 
-				v_current = v_proposal 
 
-				#print(v_proposal)
-				likelihood = likelihood_proposal 
-				pos_likl[i + 1,1]=likelihood  # contains  all proposal liklihood (accepted and rejected ones) 
-				pos_param[i+1,:] = v_current # features rain, erodibility and others  (random walks is only done for this vector) 
-				pos_samples_t[i+1,:] =  sim_vec_t # make a list of core predictions
-				pos_samples_d[i+1,:] =  sim_vec_d
-				c_pr_flow = p_pr_flow
-				c_pr_sed = p_pr_sed  
+				print( likelihood_proposal, gx, samp, self.temperature, '    v_proposal, likelihood_proposal, g, s,  temp    ++++ ---- ++++ ' )
 
-			else: # Reject sample
-				#b = i
-				pos_likl[i + 1, 1] = pos_likl[i,1]  
-				pos_param[i+1,:] = pos_param[i,:] 
-				pos_samples_t[i+1,:] = pos_samples_t[i,:] 
-				pos_samples_d[i+1,:] = pos_samples_d[i,:] 
+				#del diff 
+				#del sim_pred_d
+				#del sim_pred_t
+
+				# Difference in likelihood from previous accepted proposal
+				diff_likelihood = likelihood_proposal - likelihood
+				#print (i, '\tLikelihood proposal:', likelihood_proposal)
+				#print('\n\tDifference in likelihood proposals:', diff_likelihood)
+
+				'''for c in range(communities):
+					p_pr_flow2[c] = flowlim[1] - p_flow1[c]
+					p_pr_flow3[c] = flowlim[1] - p_flow2[c]
+					p_pr_flow4[c] = flowlim[1] - p_flow3[c]
+					p_pr_sed2[c] = sedlim[1] - p_sed1[c]
+					p_pr_sed3[c] = sedlim[1] - p_sed2[c]
+					p_pr_sed4[c] = sedlim[1] - p_sed3[c]
+				all_flow_pr = np.array([p_pr_flow2,p_pr_flow3,p_pr_flow4])
+				p_pr_flow = np.prod(all_flow_pr)
+				all_sed_pr = np.array([p_pr_sed2,p_pr_sed3,p_pr_sed4])
+				p_pr_sed = np.prod(all_sed_pr)
+
+
+
+				log_pr_flow_p = np.log(p_pr_flow)
+				log_pr_sed_p = np.log(p_pr_sed)
+				log_pr_flow_c = np.log(c_pr_flow)
+				log_pr_sed_c = np.log(c_pr_sed)
+				log_pr_p = log_pr_flow_p+log_pr_sed_p
+				log_pr_c = log_pr_flow_c+log_pr_sed_c
+				log_pr_diff = log_pr_p - log_pr_c'''
+
+				# print('log_pr_diff', log_pr_diff)
+
+
+				'''
+
+				p_cs_flow1 = norm.cdf(flowlim[1],p_flow1, self.step_flow) - norm.cdf(flowlim[0],p_flow1, self.step_flow) 
+            	p_cs_flow2 = norm.cdf(flowlim[1],p_flow2, self.step_flow) - norm.cdf(flowlim[0],p_flow2, self.step_flow)
+            	p_cs_flow3 = norm.cdf(flowlim[1],p_flow3, self.step_flow) - norm.cdf(flowlim[0],p_flow3, self.step_flow)
+            	p_cs_flow4 = norm.cdf(flowlim[1],p_flow4, self.step_flow) - norm.cdf(flowlim[0],p_flow4, self.step_flow)
+            	p_cs_m = norm.cdf(self.max_m,p_m, self.step_m) - norm.cdf(self.min_a,p_m, self.step_m)
+            	p_cs_ax = norm.cdf(self.max_m,p_ax, self.step_a) - norm.cdf(self.min_a,p_ax, self.step_a)
+            	p_cs_ay = norm.cdf(self.max_m,p_ay, self.step_a) - norm.cdf(self.min_a,p_ay, self.step_a)
+            	p_cs_flow1_prod = np.prod(p_cs_flow1)
+            	p_cs_flow2_prod = np.prod(p_cs_flow2)
+            	p_cs_flow3_prod = np.prod(p_cs_flow3)
+            	p_cs_flow4_prod = np.prod(p_cs_flow4)
+            	p_cs_all = np.array([p_cs_m,p_cs_ax,p_cs_ay])
+            	p_cs_all = np.array([p_cs_flow1_prod, p_cs_flow2_prod, p_cs_flow3_prod, p_cs_flow4_prod, p_cs_m, p_cs_ax, p_cs_ay])
+            	p_cs_prod = np.prod(p_cs_all)
+            	q_ratio = c_cs_prod/p_cs_prod
+            	print 'q_ratio', q_ratio
+
+            	'''
+
+				try:
+					mh_prob = min(1, math.exp(diff_likelihood))
+				except OverflowError as e:
+					mh_prob = 1
+
+				u = random.uniform(0,1)
+
+				#print('u:', u, 'MH probability:', mh_prob)
+				#print((i % self.swap_interval), i,  self.swap_interval, 'mod swap')
+
+				pos_likl[s+1,0] = likelihood_proposal
+				if u < mh_prob: # Accept sample
+					#b = b+1
+					print ('Accepted iteration ',samp, gx, ' \n\tLikelihood ', likelihood_proposal,'\n\tTemperature:', self.temperature,'\n\t  accepted, sample, diff ----------------->:', num_accepted,  diff, gx)
+					count_list.append(i)            # Append sample number to accepted list
+					num_accepted = num_accepted + 1 
+					accept_list[samp+1] = num_accepted
+
+					v_current = v_proposal 
+
+					#print(v_proposal)
+					likelihood = likelihood_proposal 
+					pos_likl[samp + 1,1]=likelihood  # contains  all proposal liklihood (accepted and rejected ones) 
+					pos_param[samp+1,:] = v_current # features rain, erodibility and others  (random walks is only done for this vector) 
+					pos_samples_t[samp+1,:] =  sim_vec_t # make a list of core predictions
+					pos_samples_d[samp+1,:] =  sim_vec_d
+					#c_pr_flow = p_pr_flow
+					#c_pr_sed = p_pr_sed  
+
+				else: # Reject sample
+					#b = i
+					pos_likl[samp + 1, 1] = pos_likl[s,1]  
+					pos_param[samp+1,:] = pos_param[s,:] 
+					pos_samples_t[samp+1,:] = pos_samples_t[samp,:] 
+					pos_samples_d[samp+1,:] = pos_samples_d[samp,:] 
+
+				#i = i + 1 
  
 
 			
@@ -560,7 +656,7 @@ class ptReplica(multiprocessing.Process):
 			del p_ay  
 			del p_m 
 			del v_proposal
-			del all_flow_pr 
+			'''del all_flow_pr 
 			del p_pr_flow 
 			del all_sed_pr
 			del p_pr_sed 
@@ -572,13 +668,13 @@ class ptReplica(multiprocessing.Process):
 			del log_pr_c 
 			del log_pr_diff
 			del u 
-			del mh_prob
+			del mh_prob'''
 			
 			
 			
 
 			#----------------------------------------------------------------------------------------
-			if ( i % self.swap_interval == 0 ):  
+			if ( samp % self.swap_interval == 0 ):  
 
  
 				others = np.asarray([likelihood])
@@ -1000,16 +1096,20 @@ class ParallelTempering:
 		burnin = int(self.NumSamples * self.burn_in)
 		print('Burnin:',burnin)
 
+		#num_groups = 7
+
+		pos_size =   (self.NumSamples -burnin)
+
 		
 		#file_name = self.folder + '/posterior/pos_parameters/'+filename + str(self.temperature[0]) + '.txt'
 		#dat_dummy = np.loadtxt(file_name) 
 
 		#print(dat_dummy.shape)
 
-		pos_param = np.zeros((self.num_chains, self.NumSamples -burnin, self.num_param))
+		pos_param = np.zeros((self.num_chains, pos_size , self.num_param))
 		print('Pos_param.shape:', pos_param.shape)
-		pred_t = np.zeros((self.num_chains, self.NumSamples-burnin, self.gt_vec_t.shape[0]))
-		pred_d = np.zeros((self.num_chains, self.NumSamples-burnin, self.gt_vec_d.shape[0]))
+		pred_t = np.zeros((self.num_chains, pos_size, self.gt_vec_t.shape[0]))
+		pred_d = np.zeros((self.num_chains, pos_size, self.gt_vec_d.shape[0]))
 
 		print('pred_t:',pred_t,'pred_t.shape:', pred_t.shape)
 		print('gt_prop_t.shape:',self.gt_prop_t.shape)
@@ -1476,7 +1576,7 @@ def main():
 	fig = plt.figure(figsize=(8,6))
 	#plt.plot(sample_range[1:,:], likelihood.T)
 
-	plt.plot( likelihood.T)
+	plt.plot( likelihood)
 	plt.title('Likelihood Evolution')
 	plt.xlabel('Likelihood')
 	plt.ylabel('Samples')
@@ -1486,7 +1586,7 @@ def main():
 
 
 	#adj_acceptlist = accept_list +1
-	plt.plot( accept_list.T)
+	plt.plot( accept_list)
 	plt.title('Acceptance through time', size=font)
 	plt.xlabel('Number of samples accepted', size=font)
 	plt.ylabel('Samples', size=font)
