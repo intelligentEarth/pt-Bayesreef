@@ -35,41 +35,13 @@ import sys
 
 from sys import getsizeof
 
+
+config = 2 # for parameter limits config
+
 cmap=plt.cm.Set2
 c = cycler('color', cmap(np.linspace(0,1,8)) )
 plt.rcParams["axes.prop_cycle"] = c
-
-# import copy
-# from copy import deepcopy
-# from pylab import rcParams
-# import collections
-# import cmocean as cmo
-
-
-# from scipy import special
-
-# import fnmatch
-# import shutil
-# from PIL import Image
-# from io import StringIO
-
-# mpl.use('Agg')
-
-# from matplotlib.patches import Polygon
-# from matplotlib.collections import PatchCollection
-
-# from scipy.spatial import cKDTree
-# from mpl_toolkits.axes_grid1 import make_axes_locatable
-# from mpl_toolkits.mplot3d import Axes3D
-
-# import itertools
-
-# import sys
-# import plotly
-# import plotly.plotly as py
-# from plotly.graph_objs import *
-# plotly.offline.init_notebook_mode()
-# from plotly.offline.offline import _plot_html
+ 
 
 
 class ptReplica(multiprocessing.Process):
@@ -128,7 +100,44 @@ class ptReplica(multiprocessing.Process):
 
 		self.lhood_timestructure = False  # False indicates depth_structure in lhood
 
-	def runModel(self, reef, input_vector):
+		if config ==1:
+            self.step_m = 0.1 
+            self.step_a = 0.02   
+
+            self.step_sed = 0.005 
+            self.step_flow = 0.1 
+
+            self.max_a = -0.15 
+            self.max_m = 0.25
+
+            self.sedlim = [0., 0.01]
+            self.flowlim = [0.,0.5]
+        elif config == 2: 
+            self.step_m = 0.2
+            self.step_a = 0.2  
+
+            self.step_sed = 0.01 
+            self.step_flow = 0.2 
+
+            self.max_a = -0.5 
+            self.max_m = 0.5
+
+            self.sedlim = [0., 0.05]
+            self.flowlim = [0.,1] 
+        else: 
+            self.step_m = 0.02 
+            self.step_a = 0.02 
+
+            self.max_a = -0.15
+            self.max_m = 0.15
+
+            self.sedlim = [0., 0.005]
+            self.flowlim = [0.,0.3]
+
+            self.step_sed = 0.001 
+            self.step_flow = 0.05
+
+	'''def runModel(self, reef, input_vector):
 		reef.convertVector(self.communities, input_vector, self.sedsim, self.flowsim) #model.py
 		self.true_sed, self.true_flow = reef.load_xml(self.input, self.sedsim, self.flowsim)
 		# if self.vis[0] == True:
@@ -247,16 +256,315 @@ class ptReplica(multiprocessing.Process):
 			proposal = current
 		elif proposal <= low_limit:
 			proposal = current
-		return proposal
+		return proposal'''
+
+
+	def run_Model(self, reef, input_vector):
+        reef.convert_vector(self.communities, input_vector, self.sedsim, self.flowsim) #model.py
+        self.initial_sed, self.initial_flow = reef.load_xml(self.input, self.sedsim, self.flowsim)
+
+
+        print(self.initial_sed, self.initial_flow , '   * initial sed and initial flow')
+        if self.vis[0] == True:
+            reef.core.initialSetting(size=(8,2.5), size2=(8,3.5)) # View initial parameters
+        reef.run_to_time(self.simtime,showtime=100.)
+        if self.vis[1] == True:
+            from matplotlib.cm import terrain, plasma
+            nbcolors = len(reef.core.coralH)+10
+            colors = terrain(np.linspace(0, 1.8, nbcolors))
+            nbcolors = len(reef.core.layTime)+3
+            colors2 = plasma(np.linspace(0, 1, nbcolors))
+            reef.plot.drawCore(lwidth = 3, colsed=colors, coltime = colors2, size=(9,8), font=8, dpi=300)
+        output_core = reef.plot.core_timetodepth(self.communities, self.core_depths) #modelPlot.py
+        #predicted_core = reef.convert_core(self.communities, output_core, self.core_depths) #model.py
+        #return predicted_core 
+        return output_core
+
+
+    def convert_core_format(self, core, communities):
+        vec = np.zeros(core.shape[0])
+        for n in range(len(vec)):
+            idx = np.argmax(core[n,:])# get index,
+            vec[n] = idx+1 # +1 so that zero is preserved as 'none'
+        return vec
+
+
+    def diffScore(self, sim_data,synth_data,intervals):
+        maxprop = np.zeros((intervals,sim_data.shape[1]))
+        for n in range(intervals):
+            idx_synth = np.argmax(synth_data[n,:])
+            idx_sim = np.argmax(sim_data[n,:])
+            if ((sim_data[n,self.communities] != 1.) and (idx_synth == idx_sim)): #where sediment !=1 and max proportions are equal:
+                maxprop[n,idx_synth] = 1
+        diff = (1- float(np.count_nonzero(maxprop))/intervals)*100
+        return diff
+
+    def diff_score(self, z,intervals):
+        same= np.count_nonzero(z)
+        same = float(same)/intervals
+        diff = 1-same
+        print 'diff:', diff
+        return diff*100
+ 
+
+    def give_weight(self, arr):   
+        index_array = np.zeros(arr.shape[0]) 
+        for i in range(0, arr.shape[0]): 
+            if (arr[i] == 0): 
+                index_array[i] = 1
+            else:  
+                index_array[i] = 0 
+
+        return index_array
+
+
+    def convertmat_assemindex(self, arr):   
+        index_array = np.zeros(arr.shape[0]) 
+        for i in range(0, arr.shape[0]): 
+            for j in range(0, arr.shape[1]):  
+                if (arr[i][j] == 1): 
+                    index_array[i] = j 
+        return index_array
+
+    def score_updated(self, predictions, targets):
+        # where there is 1 in the sed column, count
+
+        predictions = np.where(predictions > 0.5, 1, 0) 
+
+        p = self.convertmat_assemindex(predictions) #predictions.dot(1 << np.arange(predictions.shape[-1])) 
+
+        a =  self.convertmat_assemindex(self.core_data)  
+ 
+        '''sed = np.count_nonzero(predictions[:,self.communities])
+        p_sedprop = (float(sed)/predictions.shape[0])
+        sedprop = np.absolute((self.d_sedprop - p_sedprop)*0.5)'''
+
+        diff = np.absolute( p-a)
+        print diff, ' diff abs'
+
+        weight_array = self.give_weight(diff)
+
+        score = np.sum(weight_array)/weight_array.shape[0]
+ 
+        #rmse =(np.sqrt(((p - a) ** 2).mean()))*0.5
+
+
+        
+        return (1- score) * 100  #+ sedprop 
+
+
+    def likelihood_func(self, reef, core_data, input_v):
+        pred_core = self.run_Model(reef, input_v)
+        pred_core = pred_core.T
+        intervals = pred_core.shape[0]
+        z = np.zeros((intervals,self.communities+1))   
+
+        #print(z, intervals, ' is z int') 
+        for n in range(intervals):
+            idx_data = np.argmax(core_data[n,:])
+            idx_model = np.argmax(pred_core[n,:])
+            if ((pred_core[n,self.communities] != 1.) and (idx_data == idx_model)): #where sediment !=1 and max proportions are equal:
+                z[n,idx_data] = 1
+        diff = self.diff_score(z,intervals)
+
+        #diff = self.diffScore(sim_prop_d,gt_prop_d, intervals)
+        diff_ = self.score_updated(pred_core, core_data)
+
+        print(diff, diff_, ' diff and new diff....')
+        
+        z = z + 0.1
+        z = z/(1+(1+self.communities)*0.1)
+        loss = np.log(z)
+        # print 'sum of loss:', np.sum(loss)        
+        return [np.sum(loss) *(1.0/self.adapttemp), pred_core, diff_]
+
+    def save_core(self,reef,naccept):
+        path = '%s/%s' % (self.filename, naccept)
+        if not os.path.exists(path):
+            os.makedirs(path)
+        
+        #     Initial settings     #
+        reef.core.initialSetting(size=(8,2.5), size2=(8,4.5), dpi=300, fname='%s/a_thres_%s_' % (path, naccept))        
+        #      Community population evolution    #
+        reef.plot.speciesDepth(colors=self.colors, size=(8,4), font=8, dpi=300, fname =('%s/b_popd_%s.png' % (path,naccept)))
+        reef.plot.speciesTime(colors=self.colors, size=(8,4), font=8, dpi=300,fname=('%s/c_popt_%s.png' % (path,naccept)))
+        reef.plot.accomodationTime(size=(8,4), font=8, dpi=300, fname =('%s/d_acct_%s.pdf' % (path,naccept)))
+        
+        #      Draw core      #
+        reef.plot.drawCore(lwidth = 3, colsed=self.colors, coltime = self.colors2, size=(9,8), font=8, dpi=300, 
+                           figname=('%s/e_core_%s' % (path, naccept)), filename=('%s/core_%s.csv' % (path, naccept)), sep='\t')
+        return
+        
+    
+   
+
+    def initial_replicaproposal(self): 
+
+    
+        sed1 = np.zeros(self.communities)
+        sed2 = np.zeros(self.communities)
+        sed3 = np.zeros(self.communities)
+        sed4 = np.zeros(self.communities)
+
+        flow1 = np.zeros(self.communities)
+        flow2 = np.zeros(self.communities)
+        flow3 = np.zeros(self.communities)
+        flow4 = np.zeros(self.communities)
+
+  
+        for s in range(self.communities):
+            '''sed1[s]  = np.random.uniform(0.,0.)
+            sed2[s]  = np.random.uniform(0.,0.)
+            sed3[s]  = np.random.uniform(0.005,0.005)
+            sed4[s]  = np.random.uniform(0.005,0.005)'''
+
+
+            sed1[s] = np.random.uniform(self.sedlim[0],self.sedlim[1])
+            sed2[s] = np.random.uniform(sed1[s],self.sedlim[1])
+            sed3[s] = np.random.uniform(sed2[s],self.sedlim[1])
+            sed4[s] = np.random.uniform(sed3[s],self.sedlim[1])
+
+ 
+        for x in range(self.communities):
+            #     relaxed constraints 
+            '''flow1[s]   = np.random.uniform(0.,0.)
+            flow2[s]   = np.random.uniform(0.,0.)
+            flow3[s]   = np.random.uniform(0.3,0.3)
+            flow4[s]   = np.random.uniform(0.3,0.3)'''
+
+            flow1[x] = np.random.uniform(self.flowlim[0], self.flowlim[1])
+            flow2[x] = np.random.uniform(flow1[x], self.flowlim[1])
+            flow3[x] = np.random.uniform(flow2[x], self.flowlim[1])
+            flow4[x] = np.random.uniform(flow3[x], self.flowlim[1])
+
+
+       
+        cm_ax   = np.random.uniform(self.max_a,0.)
+        cm_ay  = np.random.uniform(self.max_a,0.)
+        m   = np.random.uniform(0.,self.max_m)
+
+        sedlim_1 = [[0., 0.0035]]
+        sedlim_2 = [[0.001,0.0035]]
+        sedlim_3 = [[0.001,0.005]]
+
+        flowlim_1 = [[0.01,0.3]]
+        flowlim_2 = [[0.,0.2]]
+        flowlim_3 = [[0.,0.1]]
+
+
+ 
+        self.sedlimits = np.concatenate((sedlim_1,sedlim_2,sedlim_3))#sedlim_4,sedlim_5,sedlim_6)) 
+        self.flowlimits = np.concatenate((flowlim_1,flowlim_2,flowlim_3))#flowlim_4,flowlim_5,flowlim_6))'''
+
+
+        glv_pro = np.array([cm_ax,cm_ay,m])
+ 
+        v_proposal = np.concatenate((sed1,sed2,sed3,sed4,flow1,flow2,flow3,flow4))
+        #v_proposal = np.append(v_proposal,(cm_ax,cm_ay,m))
+
+        return np.hstack((v_proposal,glv_pro)) #np.ravel(v_proposal) #, m, cm_ax, cm_ay
+
+
+    def proposal_vec(self, v_current):
+
+
+        size_sed = 4 * self.communities
+        size_flow = 4 * self.communities
+
+        max_a = self.max_a
+        max_m = self.max_m
+
+ 
+
+        #if self.sedsim == True:
+        tmat = v_current[0:size_sed]#np.concatenate((sed1,sed2,sed3,sed4)).reshape(4,self.communities)
+        tmat = tmat.reshape(4,self.communities)
+
+         
+        tmatrix = tmat.T
+        t2matrix = np.zeros((tmatrix.shape[0], tmatrix.shape[1]))
+        for x in range(self.communities):#-3):
+            for s in range(tmatrix.shape[1]):
+                t2matrix[x,s] = tmatrix[x,s] + np.random.normal(0,self.step_sed)
+                if t2matrix[x,s] >= self.sedlimits[x,1]:
+                    t2matrix[x,s] = tmatrix[x,s]
+                elif t2matrix[x,s] <= self.sedlimits[x,0]:
+                    t2matrix[x,s] = tmatrix[x,s]
+            # reorder each row , then transpose back as sed1, etc.
+        tmp = np.zeros((self.communities,4))
+        for x in range(t2matrix.shape[0]):
+            a = np.sort(t2matrix[x,:])
+            tmp[x,:] = a
+        tmat = tmp.T
+        p_sed1 = tmat[0,:]
+        p_sed2 = tmat[1,:]
+        p_sed3 = tmat[2,:]
+        p_sed4 = tmat[3,:]
+            
+        #if self.flowsim == True:
+        tmat = v_current[size_sed:size_sed+size_flow] #np.concatenate((flow1,flow2,flow3,flow4)).reshape(4,self.communities)
+        tmat = tmat.reshape(4,self.communities)
+
+        tmatrix = tmat.T
+        t2matrix = np.zeros((tmatrix.shape[0], tmatrix.shape[1]))
+        for x in range(self.communities):#-3):
+            for s in range(tmatrix.shape[1]):
+                t2matrix[x,s] = tmatrix[x,s] + np.random.normal(0,self.step_flow)
+                if t2matrix[x,s] >= self.flowlimits[x,1]:
+                    t2matrix[x,s] = tmatrix[x,s]
+                elif t2matrix[x,s] <= self.flowlimits[x,0]:
+                    t2matrix[x,s] = tmatrix[x,s]
+            # reorder each row , then transpose back as flow1, etc.
+        tmp = np.zeros((self.communities,4))
+        for x in range(t2matrix.shape[0]):
+            a = np.sort(t2matrix[x,:])
+            tmp[x,:] = a
+        tmat = tmp.T
+        p_flow1 = tmat[0,:]
+        p_flow2 = tmat[1,:]
+        p_flow3 = tmat[2,:]
+        p_flow4 = tmat[3,:]
+
+  
+
+        cm_ax = v_current[size_sed+size_flow] 
+        cm_ay = v_current[size_sed+size_flow+1] 
+        m = v_current[size_sed+size_flow+2] 
+
+
+
+        p_ax = cm_ax + np.random.normal(0,self.step_a,1)
+        if p_ax > 0:
+            p_ax = cm_ax
+        elif p_ax < max_a:
+            p_ax = cm_ax
+        p_ay = cm_ay + np.random.normal(0,self.step_a,1)
+        if p_ay > 0:
+            p_ay = cm_ay
+        elif p_ay < max_a:
+            p_ay = cm_ay   
+        p_m = m + np.random.normal(0,self.step_m,1)
+        if p_m < 0:
+            p_m = m
+        elif p_m > max_m:
+            p_m = m  
+
+        glv_pro = np.array([p_ax,p_ay,p_m])
+ 
+
+        v_proposal = np.concatenate((p_sed1,p_sed2,p_sed3,p_sed4,p_flow1,p_flow2,p_flow3,p_flow4))
+        
+
+        for a in glv_pro:
+            v_proposal = np.append(v_proposal, a)
+ 
+        return v_proposal  #np.ravel(v_proposal)
+
 
 	def run(self):
 		# Note this is a chain that is distributed to many cores. The chain is also known as Replica in Parallel Tempering
-
-		
 		
 		samples = self.samples
-
-		num_iterations =  samples 
 
 		pt_samples = (self.samples * 0.4)
 
@@ -321,30 +629,23 @@ class ptReplica(multiprocessing.Process):
 		#---------------------------------------
 		# Create memory to save all the accepted proposals of parameters, model predictions and likelihood
 
-		pos_param = np.empty((num_iterations,v_current.size))   
+		pos_param = np.empty((samples,v_current.size))   
 		pos_param[0,:] = v_proposal # assign first proposal
 
-		pos_samples_t = np.empty((num_iterations, sim_vec_t.size)) # list of all accepted (plus repeats) of pred cores  
+		pos_samples_t = np.empty((samples, sim_vec_t.size)) # list of all accepted (plus repeats) of pred cores  
 		pos_samples_t[0,:] = sim_vec_t # assign the first core pred
 
-		pos_samples_d = np.empty((num_iterations, sim_vec_d.size)) # list of all accepted (plus repeats) of pred cores  
+		pos_samples_d = np.empty((samples, sim_vec_d.size)) # list of all accepted (plus repeats) of pred cores  
 		pos_samples_d[0,:] = sim_vec_d # assign the first core pred
 		
-		pos_likl = np.empty((num_iterations, 2)) # one for posterior of likelihood and the other for all proposed likelihood
+		pos_likl = np.empty((samples, 2)) # one for posterior of likelihood and the other for all proposed likelihood
 		pos_likl[0,:] = [-10000, -10000] # to avoid prob in calc of 5th and 95th percentile later
-
-		# Created to account for asymmetrical proposals 
-		p_pr_flow2 = np.empty(self.communities)
-		p_pr_flow3 = np.empty(self.communities)
-		p_pr_flow4 = np.empty(self.communities)
-		p_pr_sed2 = np.empty(self.communities)
-		p_pr_sed3 = np.empty(self.communities)
-		p_pr_sed4 = np.empty(self.communities)
+ 
 
 		#----------------------------------------------------------------------------
 
 		count_list.append(0) # To count number of accepted for each chain (replica)
-		accept_list = np.empty(num_iterations)
+		accept_list = np.empty(samples)
 		start = time.time() 
 		num_accepted = 0
 		
@@ -361,45 +662,15 @@ class ptReplica(multiprocessing.Process):
 		print('Begin sampling using MCMC random walk')
 		#b = 0
 
-		num_groups = 7
-
-
-		
-
 		init_count = 0
-
-		block_size = 4
-		num_blocks = 3
-
-		sed_group = np.empty((num_blocks,block_size))
-		flow_group = np.empty((num_blocks,block_size))
-		sed_flow = np.empty((num_blocks*2,block_size))
-
-		id_sedflow = np.array([[0, 3, 6, 9],
-       						[1, 4, 7, 10],
-       						[2, 5, 8, 11],
-       						[12, 15, 18, 21],
-       						[13, 16, 19, 22],
-       						[14, 17, 20, 23]])
-
-
-
-				#[0, 3, 6, 9]
-				#[1, 4, 7, 10]
-				#[2, 5, 8, 11]
-				# [12, 15, 18, 21]
-				# [13, 16, 19, 22]
-				# [14, 17, 20, 23]
-
 		
-		
-		for samp in range(samples-1):
+		for i in range(samples-1):
 
 
-			if samp < pt_samples:
+			if i < pt_samples:
 				self.adapttemp =  self.temperature #* ratio  #
 
-			if samp == pt_samples and init_count ==0: # move to MCMC canonical
+			if i == pt_samples and init_count ==0: # move to MCMC canonical
 				self.adapttemp = 1
 				'''if self.lhood_timestructure == True:
 					[likelihood_proposal, diff, sim_pred_t, sim_pred_d, sim_vec_t, sim_vec_d] = self.likelihoodWithDependence(reef, v_proposal, S_star, cps_star, ca_props_star)
@@ -407,274 +678,76 @@ class ptReplica(multiprocessing.Process):
 					[likelihood_proposal, diff, sim_prop_d, sim_vec_d, sim_vec_t] = self.likelihoodWithProps(reef, gt_prop_d, v_proposal)'''
 				init_count = 1
 
-
-			#for g in range(num_groups): 
-
-
-
-
-
-
-
-
-			print (' Sample : ', samp, 'accepted ',num_accepted,'Temp           xxxxxxxxxxxxxxxxxxx:',self.temperature)
-
-			#print(idx_sed, num_param, '  +++++++++++ ' )
-
-			#print(self.realvalues_vec, ' self.realvalues_vec')
-
-
-
-			# Update by perturbing all parameters using normal proposal distribution and check limits.
-
-
-			#init_pro = np.concatenate((sed1,sed2,sed3,sed4,flow1,flow2,flow3,flow4))
-			#init_pro = np.append(init_pro,(cm_ax,cm_ay,m)) 
-
-			idx_sed = int((num_param-3)/2)
-
-
-			tmat = v_current[:idx_sed].reshape(4,communities)
-
-			#print(tmat, 'tmat')
-
-			tmatrix = tmat.T
-			t2matrix = np.empty((tmatrix.shape[0], tmatrix.shape[1]))
-			v_id = 0
-			for x in range(communities):
-				for s in range(tmat.shape[0]):
-					t2matrix[x,s] = self.proposalJump(tmatrix[x,s], self.minlimits_vec[v_id], self.maxlimits_vec[v_id], stepsize_vec[v_id])
-					v_id = v_id + 1
-			# reorder each row , then transpose back as sed1, etc.
-			tmp = np.empty((communities,4))
-			for x in range(t2matrix.shape[0]):
-				tmp[x,:]  = np.sort(t2matrix[x,:])
-				
-
-			tmat = tmp.T
-			p_sed1 = tmat[0,:]
-			p_sed2 = tmat[1,:]
-			p_sed3 = tmat[2,:]
-			p_sed4 = tmat[3,:]
-
-			tmat = v_current[idx_sed:2*idx_sed].reshape(4,communities)
-			tmatrix = tmat.T
-			t2matrix = np.empty((tmatrix.shape[0], tmatrix.shape[1]))
-			for x in range(communities):#-3):
-				for s in range(tmat.shape[0]):
-					t2matrix[x,s] = self.proposalJump(tmatrix[x,s], self.minlimits_vec[v_id], self.maxlimits_vec[v_id], stepsize_vec[v_id])
-					v_id = v_id + 1
-			
-			# reorder each row , then transpose back as flow1, etc.
-			tmp = np.empty((communities,4))
-			for x in range(t2matrix.shape[0]):
-				tmp[x,:] = np.sort(t2matrix[x,:])
-				 
-
-			tmat = tmp.T
-			p_flow1 = tmat[0,:]
-			p_flow2 = tmat[1,:]
-			p_flow3 = tmat[2,:]
-			p_flow4 = tmat[3,:] 
-
-			p_ax = self.proposalJump(v_current[-3], self.minlimits_vec[v_id], self.maxlimits_vec[v_id], stepsize_vec[v_id])
-			v_id = v_id + 1
-			p_ay = self.proposalJump(v_current[-2], self.minlimits_vec[v_id], self.maxlimits_vec[v_id], stepsize_vec[v_id])
-			v_id = v_id + 1
-			p_m = self.proposalJump(v_current[-1], self.minlimits_vec[v_id], self.maxlimits_vec[v_id], stepsize_vec[v_id])
-
-			v_proposal = []
-			'''if (self.sedsim == True) and (self.flowsim == False):
-				v_proposal = np.concatenate((p_sed1,p_sed2,p_sed3,p_sed4))
-			elif (self.flowsim == True) and (self.sedsim == False):
-				v_proposal = np.concatenate((p_flow1,p_flow2,p_flow3,p_flow4))
-			elif (self.sedsim == True) and (self.flowsim == True):'''
-			for i in range(num_blocks):
-				sed_group[i,:] = np.array([p_sed1[i],p_sed2[i],p_sed3[i],p_sed4[i]])
-				#print(xxx, ' xxx')
-				#sed_group[i,:] = np.concatenate(([p_sed1[i],p_sed2[i],p_sed3[i],p_sed4[i]]))
-
-			for i in range(num_blocks):
-				flow_group[i,:] = np.array([p_flow1[i],p_flow2[i],p_flow3[i],p_flow4[i]])
-
-			glv_group = np.array([p_ax,p_ay,p_m])
-
-			'''print(sed_group, ' sed_group')
-			print(flow_group, ' flow_group')
-			print(glv_group, ' glv_group')'''
-
-			sed_flow[0:3,:] = sed_group 
-			sed_flow[3:6,:] = flow_group
-
-			#print(sed_flow, ' sed_flow .....  ')
  
 
-			for gx in range(0, num_groups):
 
-				#print(samp, gx,  '---------------------------------------- +++++++++++ ~~~~~~~~~~~~~~~')
+			#tmat = v_current[:idx_sed].reshape(4,communities)
+
+
+
+            v_proposal = self.proposal_vec(v_current) 
+ 
+
+ 
+ 
+
+			if self.lhood_timestructure == True:
+				[likelihood_proposal, diff, sim_pred_t, sim_pred_d, sim_vec_t, sim_vec_d] = self.likelihoodWithDependence(reef, v_proposal, S_star, cps_star, ca_props_star)
+
+			else: # use lhood_depthstructure
+				[likelihood_proposal, diff, sim_prop_d, sim_vec_d, sim_vec_t] = self.likelihoodWithProps(reef, gt_prop_d, v_proposal)
+
+ 
+
+			# Difference in likelihood from previous accepted proposal
+			diff_likelihood = likelihood_proposal - likelihood
+			#print (i, '\tLikelihood proposal:', likelihood_proposal)
+			#print('\n\tDifference in likelihood proposals:', diff_likelihood)
+ 
+
+			try:
+				mh_prob = min(1, math.exp(diff_likelihood))
+			except OverflowError as e:
+				mh_prob = 1
+
+			u = random.uniform(0,1)
+
+			#print('u:', u, 'MH probability:', mh_prob)
+			#print((i % self.swap_interval), i,  self.swap_interval, 'mod swap')
+
+			pos_likl[i+1,0] = likelihood_proposal
+			if u < mh_prob: # Accept sample
+				#b = b+1
+				print ('Accepted Sample',i, ' \n\tLikelihood ', likelihood_proposal,'\n\tTemperature:', self.temperature,'\n\t  accepted, sample, diff ----------------->:', num_accepted,  diff)
+				count_list.append(i)            # Append sample number to accepted list
+				num_accepted = num_accepted + 1 
+				accept_list[i+1] = num_accepted
+
+				v_current = v_proposal 
+
+				#print(v_proposal)
+				likelihood = likelihood_proposal 
+				pos_likl[i + 1,1]=likelihood  # contains  all proposal liklihood (accepted and rejected ones) 
+				pos_param[i+1,:] = v_current # features rain, erodibility and others  (random walks is only done for this vector) 
+				pos_samples_t[i+1,:] =  sim_vec_t # make a list of core predictions
+				pos_samples_d[i+1,:] =  sim_vec_d
+				c_pr_flow = p_pr_flow
+				c_pr_sed = p_pr_sed  
+
+			else: # Reject sample
+				#b = i
+				pos_likl[i + 1, 1] = pos_likl[i,1]  
+				pos_param[i+1,:] = pos_param[i,:] 
+				pos_samples_t[i+1,:] = pos_samples_t[i,:] 
+				pos_samples_d[i+1,:] = pos_samples_d[i,:] 
+ 
 
 			 
-				temp_proposal = v_current.copy()
-
-				if gx == 6: 
-					temp_proposal[24:] = glv_group
-				else:
-					for k in range(block_size):
-						index = id_sedflow[gx,k] 
-						temp_proposal[index] = sed_flow[gx,k]
- 
-
-
-
-
-
-				v_proposal = temp_proposal  #np.concatenate((p_sed1,p_sed2,p_sed3,p_sed4,p_flow1,p_flow2,p_flow3,p_flow4))
-				#v_proposal = #np.append(v_proposal,(p_ax,p_ay,p_m)) 
-
-
-				if self.lhood_timestructure == True:
-					[likelihood_proposal, diff, sim_pred_t, sim_pred_d, sim_vec_t, sim_vec_d] = self.likelihoodWithDependence(reef, v_proposal, S_star, cps_star, ca_props_star)
-
-				else: # use lhood_depthstructure
-					[likelihood_proposal, diff, sim_prop_d, sim_vec_d, sim_vec_t] = self.likelihoodWithProps(reef, gt_prop_d, v_proposal)
-
-
-				print( likelihood_proposal, gx, samp, self.temperature, '    v_proposal, likelihood_proposal, g, s,  temp    ++++ ---- ++++ ' )
-
-				#del diff 
-				#del sim_pred_d
-				#del sim_pred_t
-
-				# Difference in likelihood from previous accepted proposal
-				diff_likelihood = likelihood_proposal - likelihood
-				#print (i, '\tLikelihood proposal:', likelihood_proposal)
-				#print('\n\tDifference in likelihood proposals:', diff_likelihood)
-
-				'''for c in range(communities):
-					p_pr_flow2[c] = flowlim[1] - p_flow1[c]
-					p_pr_flow3[c] = flowlim[1] - p_flow2[c]
-					p_pr_flow4[c] = flowlim[1] - p_flow3[c]
-					p_pr_sed2[c] = sedlim[1] - p_sed1[c]
-					p_pr_sed3[c] = sedlim[1] - p_sed2[c]
-					p_pr_sed4[c] = sedlim[1] - p_sed3[c]
-				all_flow_pr = np.array([p_pr_flow2,p_pr_flow3,p_pr_flow4])
-				p_pr_flow = np.prod(all_flow_pr)
-				all_sed_pr = np.array([p_pr_sed2,p_pr_sed3,p_pr_sed4])
-				p_pr_sed = np.prod(all_sed_pr)
-
-
-
-				log_pr_flow_p = np.log(p_pr_flow)
-				log_pr_sed_p = np.log(p_pr_sed)
-				log_pr_flow_c = np.log(c_pr_flow)
-				log_pr_sed_c = np.log(c_pr_sed)
-				log_pr_p = log_pr_flow_p+log_pr_sed_p
-				log_pr_c = log_pr_flow_c+log_pr_sed_c
-				log_pr_diff = log_pr_p - log_pr_c'''
-
-				# print('log_pr_diff', log_pr_diff)
-
-
-				'''
-
-				p_cs_flow1 = norm.cdf(flowlim[1],p_flow1, self.step_flow) - norm.cdf(flowlim[0],p_flow1, self.step_flow) 
-            	p_cs_flow2 = norm.cdf(flowlim[1],p_flow2, self.step_flow) - norm.cdf(flowlim[0],p_flow2, self.step_flow)
-            	p_cs_flow3 = norm.cdf(flowlim[1],p_flow3, self.step_flow) - norm.cdf(flowlim[0],p_flow3, self.step_flow)
-            	p_cs_flow4 = norm.cdf(flowlim[1],p_flow4, self.step_flow) - norm.cdf(flowlim[0],p_flow4, self.step_flow)
-            	p_cs_m = norm.cdf(self.max_m,p_m, self.step_m) - norm.cdf(self.min_a,p_m, self.step_m)
-            	p_cs_ax = norm.cdf(self.max_m,p_ax, self.step_a) - norm.cdf(self.min_a,p_ax, self.step_a)
-            	p_cs_ay = norm.cdf(self.max_m,p_ay, self.step_a) - norm.cdf(self.min_a,p_ay, self.step_a)
-            	p_cs_flow1_prod = np.prod(p_cs_flow1)
-            	p_cs_flow2_prod = np.prod(p_cs_flow2)
-            	p_cs_flow3_prod = np.prod(p_cs_flow3)
-            	p_cs_flow4_prod = np.prod(p_cs_flow4)
-            	p_cs_all = np.array([p_cs_m,p_cs_ax,p_cs_ay])
-            	p_cs_all = np.array([p_cs_flow1_prod, p_cs_flow2_prod, p_cs_flow3_prod, p_cs_flow4_prod, p_cs_m, p_cs_ax, p_cs_ay])
-            	p_cs_prod = np.prod(p_cs_all)
-            	q_ratio = c_cs_prod/p_cs_prod
-            	print 'q_ratio', q_ratio
-
-            	'''
-
-				try:
-					mh_prob = min(1, math.exp(diff_likelihood))
-				except OverflowError as e:
-					mh_prob = 1
-
-				u = random.uniform(0,1)
-
-				#print('u:', u, 'MH probability:', mh_prob)
-				#print((i % self.swap_interval), i,  self.swap_interval, 'mod swap')
-
-				pos_likl[s+1,0] = likelihood_proposal
-				if u < mh_prob: # Accept sample
-					#b = b+1
-					print ('Accepted iteration ',samp, gx, ' \n\tLikelihood ', likelihood_proposal,'\n\tTemperature:', self.temperature,'\n\t  accepted, sample, diff ----------------->:', num_accepted,  diff, gx)
-					count_list.append(i)            # Append sample number to accepted list
-					num_accepted = num_accepted + 1 
-					accept_list[samp+1] = num_accepted
-
-					v_current = v_proposal 
-
-					#print(v_proposal)
-					likelihood = likelihood_proposal 
-					pos_likl[samp + 1,1]=likelihood  # contains  all proposal liklihood (accepted and rejected ones) 
-					pos_param[samp+1,:] = v_current # features rain, erodibility and others  (random walks is only done for this vector) 
-					pos_samples_t[samp+1,:] =  sim_vec_t # make a list of core predictions
-					pos_samples_d[samp+1,:] =  sim_vec_d
-					#c_pr_flow = p_pr_flow
-					#c_pr_sed = p_pr_sed  
-
-				else: # Reject sample
-					#b = i
-					pos_likl[samp + 1, 1] = pos_likl[s,1]  
-					pos_param[samp+1,:] = pos_param[s,:] 
-					pos_samples_t[samp+1,:] = pos_samples_t[samp,:] 
-					pos_samples_d[samp+1,:] = pos_samples_d[samp,:] 
-
-				#i = i + 1 
- 
-
-			
-			del idx_sed 
-			del tmat 
-			del tmatrix 
-			del t2matrix 
-			del v_id
-			del tmp 
-				
-			
-			del p_sed1 
-			del p_sed2 
-			del p_sed3 
-			del p_sed4 
-			del p_flow1 
-			del p_flow2 
-			del p_flow3 
-			del p_flow4 
-			del  p_ax 
-			del p_ay  
-			del p_m 
-			del v_proposal
-			'''del all_flow_pr 
-			del p_pr_flow 
-			del all_sed_pr
-			del p_pr_sed 
-			del log_pr_flow_p 
-			del log_pr_sed_p 
-			del log_pr_flow_c
-			del log_pr_sed_c 
-			del log_pr_p 
-			del log_pr_c 
-			del log_pr_diff
-			del u 
-			del mh_prob'''
-			
 			
 			
 
 			#----------------------------------------------------------------------------------------
-			if ( samp % self.swap_interval == 0 ):  
+			if ( i % self.swap_interval == 0 ):  
 
  
 				others = np.asarray([likelihood])
@@ -1096,20 +1169,16 @@ class ParallelTempering:
 		burnin = int(self.NumSamples * self.burn_in)
 		print('Burnin:',burnin)
 
-		#num_groups = 7
-
-		pos_size =   (self.NumSamples -burnin)
-
 		
 		#file_name = self.folder + '/posterior/pos_parameters/'+filename + str(self.temperature[0]) + '.txt'
 		#dat_dummy = np.loadtxt(file_name) 
 
 		#print(dat_dummy.shape)
 
-		pos_param = np.zeros((self.num_chains, pos_size , self.num_param))
+		pos_param = np.zeros((self.num_chains, self.NumSamples -burnin, self.num_param))
 		print('Pos_param.shape:', pos_param.shape)
-		pred_t = np.zeros((self.num_chains, pos_size, self.gt_vec_t.shape[0]))
-		pred_d = np.zeros((self.num_chains, pos_size, self.gt_vec_d.shape[0]))
+		pred_t = np.zeros((self.num_chains, self.NumSamples-burnin, self.gt_vec_t.shape[0]))
+		pred_d = np.zeros((self.num_chains, self.NumSamples-burnin, self.gt_vec_d.shape[0]))
 
 		print('pred_t:',pred_t,'pred_t.shape:', pred_t.shape)
 		print('gt_prop_t.shape:',self.gt_prop_t.shape)
@@ -1204,7 +1273,7 @@ class ParallelTempering:
 
 		return optimal_likelihood, optimal_para, para_5thperc, para_95thperc
 
-	def summ_stats(self, fname, pos_param):
+	'''def summ_stats(self, fname, pos_param):
 		print
 		# Find mean, mode, mode count, st. dev, min, max, 5th, 95th, standard error of the mean
 		
@@ -1237,9 +1306,9 @@ class ParallelTempering:
 			with file(fname + '/summ_stats.csv', 'ab') as outfile:
 				writer = csv.writer(outfile, delimiter='\t')
 				data = [np.ndarray.tolist(summ_stats[i,:])]
-				writer.writerow([i,data])
+				writer.writerow([i,data])'''
 
-	def plot_figure(self, list, title, real_value, sample_range): 
+	'''def plot_figure(self, list, title, real_value, sample_range): 
 
 		list_points =  list
 
@@ -1310,7 +1379,260 @@ class ParallelTempering:
 		 
  
 		plt.savefig(fname + '/plot_pos/' + title  + '.png', bbox_inches='tight', dpi=300, transparent=False)
-		plt.close()
+		plt.close()'''
+
+
+
+    def plot_figure(self, list, title, real_value, nreplicas  ): 
+
+        list_points =  list
+        fname = self.filename
+         
+
+
+        size = 14
+ 
+
+
+        fig, ax = plt.subplots()
+   
+
+
+        ax.hist(list_points,    bins=20, rwidth=0.9,   color='#607c8e')
+ 
+        ax.tick_params(axis="x", labelsize=14)
+        ax.tick_params(axis="y", labelsize=14)
+        #ax.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:.3f}')) 
+
+
+        fmtr = ticker.StrMethodFormatter(('{x:,g}'))
+        ax.yaxis.set_major_formatter(fmtr)
+ 
+        ax.yaxis.set_minor_formatter(ticker.StrMethodFormatter('{x:.3f}'))
+
+        ax.set_xlabel("Parameter", fontsize=15)
+        ax.set_ylabel("Frequency", fontsize=15) 
+
+        if self.problem == 1:
+            plt.axvline(x=real_value, linewidth=2, color='b')
+ 
+        
+        ax.grid(linestyle='-', linewidth='0.2', color='grey')
+        plt.tight_layout()  
+        plt.savefig(fname   +'/posterior/'+ title  + '_posterior.pdf')
+        plt.clf()
+
+ 
+
+
+        fig, ax = plt.subplots()
+
+        listx = np.asarray(np.split(list_points,  nreplicas ))
+        ax.plot(listx.T)    
+
+        ax.tick_params(axis="x", labelsize=14)
+        ax.tick_params(axis="y", labelsize=14)
+        ax.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:.3f}')) 
+ 
+        ax.yaxis.set_minor_formatter( ticker.StrMethodFormatter(('{x:,g}')) )
+  
+        ax.set_xlabel("Iterations", fontsize=15)
+        ax.set_ylabel("Parameter", fontsize=15) 
+        
+        ax.grid(linestyle='-', linewidth='0.2', color='grey')
+        plt.tight_layout()  
+
+        plt.savefig(fname  +'/posterior/'+ title  + '_trace.pdf')
+        plt.clf()
+
+def make_directory (directory):
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+	def pos_sedflow(self, pos):
+
+
+        pos_sed1 = pos[0:3,:]   
+        pos_sed2 = pos[3:6,:]
+        pos_sed3 = pos[6:9,:]
+        pos_sed4 = pos[9:12,:]
+        pos_flow1 = pos[12:15,:]
+        pos_flow2 = pos[15:19,:]
+        pos_flow3 = pos[19:22,:] 
+        pos_flow4 = pos[22:25,:] 
+
+
+        nb_bins=30
+        slen = np.arange(0,pos_sed1.shape[0],1)
+ 
+ 
+
+
+        # PLOT SEDIMENT AND FLOW RESPONSE THRESHOLDS #
+        a_labels = ['Shallow windward', 'Moderate-deep windward', 'Deep windward']#, 'Shallow leeward', 'Moderate-deep leeward', 'Deep leeward']
+        
+        sed1_mu, sed1_ub, sed1_lb, sed2_mu, sed2_ub, sed2_lb, sed3_mu, sed3_ub, sed3_lb, sed4_mu, sed4_ub, sed4_lb = (np.zeros(self.communities) for i in range(12))
+        if ((self.sedsim != False)):
+            for a in range(self.communities):
+                sed1_mu[a] = np.mean(pos_sed1[:,a])
+                sed1_ub[a] = np.percentile(pos_sed1[:,a], 95, axis=0)
+                sed1_lb[a] = np.percentile(pos_sed1[:,a], 5, axis=0)
+                
+                sed2_mu[a] = np.mean(pos_sed2[:,a])
+                sed2_ub[a] = np.percentile(pos_sed2[:,a], 95, axis=0)
+                sed2_lb[a] = np.percentile(pos_sed2[:,a], 5, axis=0)
+                
+                sed3_mu[a] = np.mean(pos_sed3[:,a])
+                sed3_ub[a] = np.percentile(pos_sed3[:,a], 95, axis=0)
+                sed3_lb[a] = np.percentile(pos_sed3[:,a], 5, axis=0)
+                
+                sed4_mu[a] = np.mean(pos_sed4[:,a])
+                sed4_ub[a] = np.percentile(pos_sed4[:,a], 95, axis=0)
+                sed4_lb[a] = np.percentile(pos_sed4[:,a], 5, axis=0)
+
+                sed1_mu_=sed1_mu[a]
+                sed2_mu_=sed2_mu[a]
+                sed3_mu_=sed3_mu[a]
+                sed4_mu_=sed4_mu[a]
+                sed1_min=sed1_lb[a]
+                sed2_min=sed2_lb[a]
+                sed3_min=sed3_lb[a]
+                sed4_min=sed4_lb[a]
+                sed1_max=sed1_ub[a]
+                sed2_max=sed2_ub[a]
+                sed3_max=sed3_ub[a]
+                sed4_max=sed4_ub[a]
+                sed1_med=np.median(pos_sed1[:,a])
+                sed2_med=np.median(pos_sed2[:,a])
+                sed3_med=np.median(pos_sed3[:,a])
+                sed4_med=np.median(pos_sed4[:,a])
+                sed1_mode, count=stats.mode(pos_sed1[:,a])
+                sed2_mode, count=stats.mode(pos_sed2[:,a])
+                sed3_mode, count=stats.mode(pos_sed3[:,a])
+                sed4_mode, count=stats.mode(pos_sed4[:,a])
+
+
+                with file(('%s/summ_stats.txt' % (self.filename)),'a') as outfile:
+                    outfile.write('\n# Sediment threshold: {0}\n'.format(a_labels[a]))
+                    outfile.write('5TH %ILE, 95TH %ILE, MEAN, MEDIAN\n')
+                    outfile.write('Sed1\n{0}, {1}, {2}, {3}\n'.format(sed1_min,sed1_max,sed1_mu_,sed1_med))
+                    outfile.write('Sed2\n{0}, {1}, {2}, {3}\n'.format(sed2_min,sed2_max,sed2_mu_,sed2_med))
+                    outfile.write('Sed3\n{0}, {1}, {2}, {3}\n'.format(sed3_min,sed3_max,sed3_mu_,sed3_med))
+                    outfile.write('Sed4\n{0}, {1}, {2}, {3}\n'.format(sed4_min,sed4_max,sed4_mu_,sed4_med))
+                    outfile.write('Modes\n\tSed1:\t{0}\n\tSed2:\t{1}\n\tSed3:\t{2}\n\tSed4:\t{3}'.format(sed1_mode,sed2_mode,sed3_mode,sed4_mode))
+
+                cy = [0,100,100,0]
+                cmu = [sed1_mu[a], sed2_mu[a], sed3_mu[a], sed4_mu[a]]
+                c_lb = [sed1_mu[a]-sed1_lb[a], sed2_mu[a]-sed2_lb[a], sed3_mu[a]-sed3_lb[a], sed4_mu[a]-sed4_lb[a]]
+                c_ub = [sed1_ub[a]-sed1_mu[a], sed2_ub[a]-sed2_mu[a], sed3_ub[a]-sed3_mu[a], sed4_ub[a]-sed4_mu[a]]
+                
+                fig = plt.figure(figsize=(6,4))
+                ax = fig.add_subplot(111)
+                ax.set_facecolor('#f2f2f3')
+                if self.problem ==1:
+                    ax.plot(self.initial_sed[a,:], cy, linestyle='--', linewidth=self.width, marker='.',color='k', label='True')
+                ax.plot(cmu, cy, linestyle='-', linewidth=self.width,marker='.', color='sandybrown', label='Estimate')
+                ax.errorbar(cmu[0:2],cy[0:2],xerr=[c_lb[0:2],c_ub[0:2]],capsize=5,elinewidth=1, color='darksalmon',mfc='darksalmon',fmt='.',label=None)
+                ax.errorbar(cmu[2:4],cy[2:4],xerr=[c_lb[2:4],c_ub[2:4]],capsize=5,elinewidth=1, color='sienna',mfc='sienna',fmt='.',label=None)
+
+                ax.tick_params(axis='both', which='major', labelsize=10)
+                ax.tick_params(axis='both', which='minor', labelsize=10)
+
+                ax.set_xlabel("Sediment input (m/year)", fontsize=11)
+                ax.set_ylabel("Max. growth rate", fontsize=11) 
+                
+
+
+                plt.title('Sediment exposure threshold function\n(%s assemblage)' % (a_labels[a]), size=11, y=1.06)
+                #plt.ylabel('Proportion of maximum growth rate [%]',size=self.font+1)
+                #plt.xlabel('Sediment input [m/year]',size=self.font+1)
+                plt.ylim(-2.,110)
+                lgd = plt.legend(frameon=False, prop={'size':10}, bbox_to_anchor = (1.,0.2))
+                plt.savefig('%s/sediment_response_%s.pdf' % (self.filename, a+1), bbox_extra_artists=(lgd,),bbox_inches='tight',dpi=300,transparent=False)
+                plt.clf()
+
+        flow1_mu, flow1_ub,flow1_lb, flow2_mu, flow2_ub,flow2_lb, flow3_mu, flow3_ub,flow3_lb, flow4_mu, flow4_ub,flow4_lb = (np.zeros(self.communities) for i in range(12))
+        if (self.flowsim != False):
+            for a in range(self.communities):
+                flow1_mu[a] = np.mean(pos_flow1[:,a])
+                flow1_ub[a] = np.percentile(pos_flow1[:,a], 95, axis=0)
+                flow1_lb[a] = np.percentile(pos_flow1[:,a], 5, axis=0)
+                
+                flow2_mu[a] = np.mean(pos_flow2[:,a])
+                flow2_ub[a] = np.percentile(pos_flow2[:,a], 95, axis=0)
+                flow2_lb[a] = np.percentile(pos_flow2[:,a], 5, axis=0)
+                
+                flow3_mu[a] = np.mean(pos_flow3[:,a])
+                flow3_ub[a] = np.percentile(pos_flow3[:,a], 95, axis=0)
+                flow3_lb[a] = np.percentile(pos_flow3[:,a], 5, axis=0)
+                
+                flow4_mu[a] = np.mean(pos_flow4[:,a])
+                flow4_ub[a] = np.percentile(pos_flow4[:,a], 95, axis=0)
+                flow4_lb[a] = np.percentile(pos_flow4[:,a], 5, axis=0)
+
+                flow1_mu_ = flow1_mu[a]
+                flow2_mu_ = flow2_mu[a]
+                flow3_mu_ = flow3_mu[a]
+                flow4_mu_ = flow4_mu[a]
+                flow1_min= flow1_lb[a]
+                flow1_max=flow1_ub[a]
+                flow1_med=np.median(pos_flow1[:,a])
+                flow2_min=flow2_lb[a]
+                flow2_max=flow2_ub[a]
+                flow2_med=np.median(pos_flow2[:,a])
+                flow3_min=flow3_lb[a]
+                flow3_max=flow3_ub[a]
+                flow3_med=np.median(pos_flow3[:,a])
+                flow4_min=flow4_lb[a]
+                flow4_max=flow4_ub[a]
+                flow4_med=np.median(pos_flow4[:,a])
+                flow1_mode, count= stats.mode(pos_flow1[:,a])
+                flow2_mode, count= stats.mode(pos_flow2[:,a])
+                flow3_mode, count= stats.mode(pos_flow3[:,a])
+                flow4_mode, count= stats.mode(pos_flow4[:,a])
+
+                with file(('%s/summ_stats.txt' % (self.filename)),'a') as outfile:
+                    outfile.write('\n# Water flow threshold: {0}\n'.format(a_labels[a]))
+                    outfile.write('#5TH %ILE, 95TH %ILE, MEAN, MEDIAN\n')
+                    outfile.write('# flow1\n{0}, {1}, {2}, {3}\n'.format(flow1_min,flow1_max,flow1_mu_,flow1_med))
+                    outfile.write('# flow2\n{0}, {1}, {2}, {3}\n'.format(flow2_min,flow2_max,flow2_mu_,flow2_med))
+                    outfile.write('# flow3\n{0}, {1}, {2}, {3}\n'.format(flow3_min,flow3_max,flow3_mu_,flow3_med))
+                    outfile.write('# flow4\n{0}, {1}, {2}, {3}\n'.format(flow4_min,flow4_max,flow4_mu_,flow4_med))
+                    outfile.write('Modes\n\tFlow1:\t{0}\n\tFlow2:\t{1}\n\tFlow3:\t{2}\n\tFlow4:\t{3}'.format(flow1_mode,flow2_mode,flow3_mode,flow4_mode))
+
+                cy = [0,100,100,0]
+                cmu = [flow1_mu[a], flow2_mu[a], flow3_mu[a], flow4_mu[a]]
+                c_lb = [flow1_mu[a]-flow1_lb[a], flow2_mu[a]-flow2_lb[a], flow3_mu[a]-flow3_lb[a], flow4_mu[a]-flow4_lb[a]]
+                c_ub = [flow1_ub[a]-flow1_mu[a], flow2_ub[a]-flow2_mu[a], flow3_ub[a]-flow3_mu[a], flow4_ub[a]-flow4_mu[a]]
+
+                
+                fig = plt.figure(figsize=(6,4))
+
+                params = {'legend.fontsize': 15, 'legend.handlelength': 2}
+                plt.rcParams.update(params)
+                ax = fig.add_subplot(111)
+                ax.set_facecolor('#f2f2f3')
+                if self.problem ==1:
+                    ax.plot(self.initial_flow[a,:], cy, linestyle='--', linewidth=self.width, marker='.', color='k',label='True')
+                ax.plot(cmu, cy, linestyle='-', linewidth=self.width, marker='.', color='steelblue', label='Estimate')
+                ax.errorbar(cmu[0:2],cy[0:2],xerr=[c_lb[0:2],c_ub[0:2]],capsize=5,elinewidth=1,color='lightsteelblue',mfc='lightsteelblue',fmt='.',label=None)
+                ax.errorbar(cmu[2:4],cy[2:4],xerr=[c_lb[2:4],c_ub[2:4]],capsize=5,elinewidth=1,color='lightslategrey',mfc='lightslategrey',fmt='.',label=None)
+
+                ax.tick_params(axis='both', which='major', labelsize=10)
+                ax.tick_params(axis='both', which='minor', labelsize=10)
+
+                ax.set_xlabel("Fluid flow (m/sec)", fontsize=11)
+                ax.set_ylabel("Max. growth rate", fontsize=11) 
+
+                plt.title('Hydrodynamic energy exposure threshold function\n(%s assemblage)' % (a_labels[a]), size=11, y=1.06)
+                #plt.ylabel('Proportion of maximum growth rate [%]', size=self.font+1)
+                #plt.xlabel('Fluid flow [m/sec]', size=self.font+1)
+                plt.ylim(-2.,110.)
+                lgd = plt.legend(frameon=False, prop={'size':10}, bbox_to_anchor = (1.,0.2))
+                plt.savefig('%s/flow_response_%s.pdf' % (self.filename, a+1),  bbox_extra_artists=(lgd,), bbox_inches='tight',dpi=300,transparent=False)
+                plt.clf()
+
+ 
  
 
 def mean_sqerror(  pred_erodep, pred_elev,  real_elev,  real_erodep_pts):
@@ -1576,7 +1898,7 @@ def main():
 	fig = plt.figure(figsize=(8,6))
 	#plt.plot(sample_range[1:,:], likelihood.T)
 
-	plt.plot( likelihood)
+	plt.plot( likelihood.T)
 	plt.title('Likelihood Evolution')
 	plt.xlabel('Likelihood')
 	plt.ylabel('Samples')
@@ -1586,7 +1908,7 @@ def main():
 
 
 	#adj_acceptlist = accept_list +1
-	plt.plot( accept_list)
+	plt.plot( accept_list.T)
 	plt.title('Acceptance through time', size=font)
 	plt.xlabel('Number of samples accepted', size=font)
 	plt.ylabel('Samples', size=font)

@@ -7,7 +7,7 @@ echo Running all
  
 for x in  1  
 	do 	
-			python ptBayesReef_Gibbs.py  1 10 2 10000 
+			python ptBayesReef_Gibbs.py  1 10 1 50000
   
 	done 
 

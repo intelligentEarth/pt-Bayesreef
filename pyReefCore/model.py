@@ -272,7 +272,7 @@ class Model(object):
 
         return 1
 
-    def convertVector(self, communities, input_vector, sedsim, flowsim, verbose=False):
+    '''def convertVector(self, communities, input_vector, sedsim, flowsim, verbose=False):
         # print 'Input vector: ', input_vector
         new_shape = communities*4
         if (sedsim == True) and (flowsim == False):
@@ -330,7 +330,69 @@ class Model(object):
         print '\t Matrix main:', x, 'and sub-/super:', y
         print '\t Malthus.:', tempParam
         
-        return 
+        return'''
+
+    
+
+    def convert_vector(self, communities, input_vector, sedsim, flowsim, verbose=False):
+        # print 'input vector: ', input_vector
+        new_shape = communities*4
+        if (sedsim == True) and (flowsim == False):
+            self.opt_Sed = input_vector[0:new_shape].reshape(4,communities)
+            self.opt_Sed = self.opt_Sed.T
+            x = input_vector[new_shape]
+            y = input_vector[new_shape+1]
+            diagmat = np.zeros((communities, communities))
+            np.fill_diagonal(diagmat, x)
+            for i in range(0, communities - 1):
+                diagmat[i][i + 1] = y
+                diagmat[i + 1][i] = y
+            self.opt_cMatrix = diagmat
+            tempParam= float(input_vector[new_shape+2])
+            self.opt_malthusParam = np.full(communities, tempParam)
+            # self.opt_malthusParam = np.ones(communities)
+            # for i in range(0,self.opt_malthusParam.shape[0]):
+            #     self.opt_malthusParam[i] = float(tempParam)
+        elif (flowsim == True) and (sedsim == False):
+            self.opt_Flow = input_vector[0:new_shape].reshape(4,communities)
+            self.opt_Flow = self.opt_Flow.T
+            x = input_vector[new_shape]
+            y = input_vector[new_shape+1]
+            diagmat = np.zeros((communities, communities))
+            np.fill_diagonal(diagmat, x)
+            for i in range(0, communities - 1):
+                diagmat[i][i + 1] = y
+                diagmat[i + 1][i] = y
+            self.opt_cMatrix = diagmat
+            tempParam= float(input_vector[new_shape+2])
+            self.opt_malthusParam = np.full(communities, tempParam)
+        elif (sedsim == True) and (flowsim == True):
+            self.opt_Sed = input_vector[0:new_shape].reshape(4,communities)
+            self.opt_Flow = input_vector[new_shape:(new_shape*2)].reshape(4,communities)
+            self.opt_Sed = self.opt_Sed.T
+            self.opt_Flow = self.opt_Flow.T
+            x = input_vector[new_shape*2]
+            y = input_vector[(new_shape*2)+1]
+            diagmat = np.zeros((communities, communities))
+            np.fill_diagonal(diagmat, x)
+            for i in range(0, communities - 1):
+                diagmat[i][i + 1] = y
+                diagmat[i + 1][i] = y
+            self.opt_cMatrix = diagmat
+            tempParam= float(input_vector[(new_shape*2)+2])
+            self.opt_malthusParam = np.full(communities, tempParam)
+        optf = self.opt_Flow
+        opts = self.opt_Sed
+        optCM = self.opt_cMatrix
+        optMP = self.opt_malthusParam
+
+        print 'New parameters:'
+        # print '\t Sed:\n', opts
+        # print '\t Flow:\n', optf
+        print '\t Matrix main:', x, 'and sub-/super:', y
+        print '\t Malthus.:', tempParam
+        
+        return
 
     def convert_core(self, communities, output_core, core_depths):
         # print 'output_core', output_core
