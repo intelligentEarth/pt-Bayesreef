@@ -910,8 +910,7 @@ class MCMC():
         diffscore = rep_diffscore[:,burnin:]
 
 
-        for s in range( 0, num_param):  
-            print self.true_values[s]  
+        for s in range( 0, num_param):   
             
             self.plot_figure(posterior[s,:], 'pos_distri_'+str(s),  self.true_values[s] , nreplicas ) 
 
@@ -987,6 +986,8 @@ class MCMC():
 def make_directory (directory):
     if not os.path.exists(directory):
         os.makedirs(directory)
+
+
 
 #####################################################################
 #####################################################################
