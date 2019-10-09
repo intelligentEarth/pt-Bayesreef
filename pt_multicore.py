@@ -110,12 +110,16 @@ class ptReplica(multiprocessing.Process):
  
 
 
-    def run_Model(self, reef, input_vector):
+    def run_Model(self,  input_vector):
+
+
+        reef = Model()
+
         reef.convert_vector(self.communities, input_vector, self.sedsim, self.flowsim) #model.py
         self.initial_sed, self.initial_flow = reef.load_xml(self.input, self.sedsim, self.flowsim)
 
 
-        print(self.initial_sed, self.initial_flow , '   * initial sed and initial flow')
+        #print(self.initial_sed, self.initial_flow , '   * initial sed and initial flow')
         if self.vis[0] == True:
             reef.core.initialSetting(size=(8,2.5), size2=(8,3.5)) # View initial parameters
         reef.run_to_time(self.simtime,showtime=100.)
@@ -125,7 +129,7 @@ class ptReplica(multiprocessing.Process):
             colors = terrain(np.linspace(0, 1.8, nbcolors))
             nbcolors = len(reef.core.layTime)+3
             colors2 = plasma(np.linspace(0, 1, nbcolors))
-            reef.plot.drawCore(lwidth = 3, colsed=colors, coltime = colors2, size=(9,8), font=8, dpi=300)
+            #reef.plot.drawCore(lwidth = 3, colsed=colors, coltime = colors2, size=(9,8), font=8, dpi=300)
         output_core = reef.plot.core_timetodepth(self.communities, self.core_depths) #modelPlot.py
         #predicted_core = reef.convert_core(self.communities, output_core, self.core_depths) #model.py
         #return predicted_core 
@@ -168,6 +172,7 @@ class ptReplica(multiprocessing.Process):
         p = self.convertmat_assemindex(predictions) #predictions.dot(1 << np.arange(predictions.shape[-1])) 
 
         a =  self.convertmat_assemindex(self.core_data)  
+ 
   
 
         diff = np.absolute( p-a) 
@@ -181,8 +186,30 @@ class ptReplica(multiprocessing.Process):
         return (1- score) * 100  #+ sedprop 
 
 
-    def likelihood_func(self, reef, core_data, input_v):
-        pred_core = self.run_Model(reef, input_v)
+    def likelihood_func(self,  core_data, input_v):
+
+         
+ 
+
+        sed1=[0.0009, 0.0015, 0.0023]  # true values for synthetic 3 asssemblege problem (flow and sed)
+        sed2=[0.0015, 0.0017, 0.0024]
+        sed3=[0.0016, 0.0028, 0.0027]
+        sed4=[0.0017, 0.0031, 0.0043]
+        flow1=[0.055, 0.008 ,0.]
+        flow2=[0.082, 0.051, 0.]
+        flow3=[0.259, 0.172, 0.058] 
+        flow4=[0.288, 0.185, 0.066]  
+
+
+        v_proposal = np.concatenate((sed1,sed2,sed3,sed4,flow1,flow2,flow3,flow4))
+        #input_v = np.append(v_proposal,(ax,ay,mal))
+
+        input_v[0: 24] = v_proposal
+
+        print(input_v, ' ** ')
+
+
+        pred_core = self.run_Model( input_v)
         pred_core = pred_core.T
         intervals = pred_core.shape[0]
         z = np.zeros((intervals,self.communities+1))   
@@ -196,14 +223,17 @@ class ptReplica(multiprocessing.Process):
 
         #diff = self.diffScore(sim_prop_d,gt_prop_d, intervals)
         diff_ = self.score_updated(pred_core, core_data)
-
-        print(  diff_, '  new diff score....')
+ 
         
         z = z + 0.1
         z = z/(1+(1+self.communities)*0.1)
         loss = np.log(z)
-        # print 'sum of loss:', np.sum(loss)        
-        return [np.sum(loss) *(1.0/self.adapttemp), pred_core, diff_]
+        sum_loss = np.sum(loss)
+        print ('sum of loss:', sum_loss , diff_)        
+        return [sum_loss *(1.0/self.adapttemp), pred_core, diff_]
+ 
+
+     
 
     def save_core(self,reef,naccept):
         path = '%s/%s' % (self.filename, naccept)
@@ -393,36 +423,39 @@ class ptReplica(multiprocessing.Process):
  
 
 
-        reef = Model()
 
 
- 
-        likelihood, rep_predcore_, rep_diffscore = self.likelihood_func(reef, self.core_data, v_proposal) 
+        for i in range(3):
 
-        rep_likelihood = likelihood *(1.0/self.temperature)
+            likelihood, rep_predcore_, rep_diffscore = self.likelihood_func(  self.core_data, v_proposal) 
 
-        predcore  = self.convert_core_format(rep_predcore_, self.communities)
- 
+             
 
-        pos_samples_d = np.empty((samples, self.core_depths.size)) # list of all accepted (plus repeats) of pred cores 
- 
-        pos_samples_d[0,:] = predcore # assign the first core pred
-        
-        pos_likl = np.empty((samples, 2)) # one for posterior of likelihood and the other for all proposed likelihood
-        pos_likl[0,:] = [-10000, -10000] # to avoid prob in calc of 5th and 95th percentile later
+            predcore  = self.convert_core_format(rep_predcore_, self.communities)
+     
 
-        list_diffscore =  np.empty(samples)
- 
-       
+            pos_samples_d = np.empty((samples, self.core_depths.size)) # list of all accepted (plus repeats) of pred cores 
+     
+            pos_samples_d[0,:] = predcore # assign the first core pred
+            
+            pos_likl = np.empty((samples, 2)) # one for posterior of likelihood and the other for all proposed likelihood
+            pos_likl[0,:] = [-10000, -10000] # to avoid prob in calc of 5th and 95th percentile later
 
-
-        
-        
+            list_diffscore =  np.empty(samples) 
 
 
-
-        print ('\tInitial likelihood:', likelihood, 'and  temp lhood:', rep_likelihood)
+            print (i, '\tInitial likelihood:', likelihood, 'and  diff:', rep_diffscore)
         #---------------------------------------
+
+        print (  '\t done: ----------------------------------+++++++++++++++++++++++++++--')
+
+
+
+
+
+
+
+
 
         count_list.append(0) # To count number of accepted for each chain (replica)
         accept_list = np.empty(samples)
@@ -445,24 +478,26 @@ class ptReplica(multiprocessing.Process):
 
 
             if i < pt_samples:
-                self.adapttemp =  self.temperature #* ratio  #
+                self.adapttemp =  1 #self.temperature #* ratio  #
 
             if i == pt_samples and init_count ==0: # move to MCMC canonical
                 self.adapttemp = 1 
-                likelihood_proposal, rep_predcore_, rep_diffscore = self.likelihood_func(reef, self.core_data, v_proposal)  
+                likelihood_proposal, rep_predcore_, rep_diffscore = self.likelihood_func(  self.core_data, v_proposal)  
 
                 init_count = 1
 
-            print(v_current, ' v_current')
+            #print(v_current, ' v_current')
 
  
  
             v_proposal = self.proposal_vec(v_current)  
  
-            likelihood_proposal, rep_predcore_, rep_diffscore = self.likelihood_func(reef, self.core_data, v_proposal)  
+            likelihood_proposal, rep_predcore_, rep_diffscore = self.likelihood_func(  self.core_data, v_proposal)  
             predcore  = self.convert_core_format(rep_predcore_, self.communities)
  
             diff_likelihood = likelihood_proposal - likelihood 
+
+            print(likelihood_proposal, diff_likelihood, '  + --------------------  + ')
  
 
             try:
@@ -613,6 +648,9 @@ class ParallelTempering:
         self.burn_in = burn_in
         self.pt_stage =  pt_stage
         self.problem = problem
+
+        self.initial_sed = []
+        self.initial_flow = []
 
 
  
@@ -1099,7 +1137,7 @@ class ParallelTempering:
         plt.savefig(fname  +'/posterior/'+ title  + '_trace.pdf')
         plt.clf()
 
-
+ 
     def pos_sedflow(self, pos):
 
 
@@ -1120,168 +1158,175 @@ class ParallelTempering:
 
 
         # PLOT SEDIMENT AND FLOW RESPONSE THRESHOLDS #
-        a_labels = ['Shallow windward', 'Moderate-deep windward', 'Deep windward']#, 'Shallow leeward', 'Moderate-deep leeward', 'Deep leeward']
+
+        if self.communities == 3:
+            a_labels = ['Shallow windward', 'Moderate-deep windward', 'Deep windward']#, 'Shallow leeward', 'Moderate-deep leeward', 'Deep leeward']
+        else:
+            a_labels = ['Windward Shallow', 'Windward Mod-deep', 'Windward Deep', 'Sediment','Leeward Shallow', 'Leeward Mod-deep', 'Leeward Deep']
+         
         
         sed1_mu, sed1_ub, sed1_lb, sed2_mu, sed2_ub, sed2_lb, sed3_mu, sed3_ub, sed3_lb, sed4_mu, sed4_ub, sed4_lb = (np.zeros(self.communities) for i in range(12))
-      
-        for a in range(self.communities):
-            sed1_mu[a] = np.mean(pos_sed1[:,a])
-            sed1_ub[a] = np.percentile(pos_sed1[:,a], 95, axis=0)
-            sed1_lb[a] = np.percentile(pos_sed1[:,a], 5, axis=0)
-            
-            sed2_mu[a] = np.mean(pos_sed2[:,a])
-            sed2_ub[a] = np.percentile(pos_sed2[:,a], 95, axis=0)
-            sed2_lb[a] = np.percentile(pos_sed2[:,a], 5, axis=0)
-            
-            sed3_mu[a] = np.mean(pos_sed3[:,a])
-            sed3_ub[a] = np.percentile(pos_sed3[:,a], 95, axis=0)
-            sed3_lb[a] = np.percentile(pos_sed3[:,a], 5, axis=0)
-            
-            sed4_mu[a] = np.mean(pos_sed4[:,a])
-            sed4_ub[a] = np.percentile(pos_sed4[:,a], 95, axis=0)
-            sed4_lb[a] = np.percentile(pos_sed4[:,a], 5, axis=0)
+        if (True):
+            for a in range(self.communities):
+                sed1_mu[a] = np.mean(pos_sed1[:,a])
+                sed1_ub[a] = np.percentile(pos_sed1[:,a], 95, axis=0)
+                sed1_lb[a] = np.percentile(pos_sed1[:,a], 5, axis=0)
+                
+                sed2_mu[a] = np.mean(pos_sed2[:,a])
+                sed2_ub[a] = np.percentile(pos_sed2[:,a], 95, axis=0)
+                sed2_lb[a] = np.percentile(pos_sed2[:,a], 5, axis=0)
+                
+                sed3_mu[a] = np.mean(pos_sed3[:,a])
+                sed3_ub[a] = np.percentile(pos_sed3[:,a], 95, axis=0)
+                sed3_lb[a] = np.percentile(pos_sed3[:,a], 5, axis=0)
+                
+                sed4_mu[a] = np.mean(pos_sed4[:,a])
+                sed4_ub[a] = np.percentile(pos_sed4[:,a], 95, axis=0)
+                sed4_lb[a] = np.percentile(pos_sed4[:,a], 5, axis=0)
 
-            sed1_mu_=sed1_mu[a]
-            sed2_mu_=sed2_mu[a]
-            sed3_mu_=sed3_mu[a]
-            sed4_mu_=sed4_mu[a]
-            sed1_min=sed1_lb[a]
-            sed2_min=sed2_lb[a]
-            sed3_min=sed3_lb[a]
-            sed4_min=sed4_lb[a]
-            sed1_max=sed1_ub[a]
-            sed2_max=sed2_ub[a]
-            sed3_max=sed3_ub[a]
-            sed4_max=sed4_ub[a]
-            sed1_med=np.median(pos_sed1[:,a])
-            sed2_med=np.median(pos_sed2[:,a])
-            sed3_med=np.median(pos_sed3[:,a])
-            sed4_med=np.median(pos_sed4[:,a])
-            sed1_mode, count=stats.mode(pos_sed1[:,a])
-            sed2_mode, count=stats.mode(pos_sed2[:,a])
-            sed3_mode, count=stats.mode(pos_sed3[:,a])
-            sed4_mode, count=stats.mode(pos_sed4[:,a])
-
-
-            with file(('%s/summ_stats.txt' % (self.folder)),'a') as outfile:
-                outfile.write('\n# Sediment threshold: {0}\n'.format(a_labels[a]))
-                outfile.write('5TH %ILE, 95TH %ILE, MEAN, MEDIAN\n')
-                outfile.write('Sed1\n{0}, {1}, {2}, {3}\n'.format(sed1_min,sed1_max,sed1_mu_,sed1_med))
-                outfile.write('Sed2\n{0}, {1}, {2}, {3}\n'.format(sed2_min,sed2_max,sed2_mu_,sed2_med))
-                outfile.write('Sed3\n{0}, {1}, {2}, {3}\n'.format(sed3_min,sed3_max,sed3_mu_,sed3_med))
-                outfile.write('Sed4\n{0}, {1}, {2}, {3}\n'.format(sed4_min,sed4_max,sed4_mu_,sed4_med))
-                outfile.write('Modes\n\tSed1:\t{0}\n\tSed2:\t{1}\n\tSed3:\t{2}\n\tSed4:\t{3}'.format(sed1_mode,sed2_mode,sed3_mode,sed4_mode))
-
-            cy = [0,100,100,0]
-            cmu = [sed1_mu[a], sed2_mu[a], sed3_mu[a], sed4_mu[a]]
-            c_lb = [sed1_mu[a]-sed1_lb[a], sed2_mu[a]-sed2_lb[a], sed3_mu[a]-sed3_lb[a], sed4_mu[a]-sed4_lb[a]]
-            c_ub = [sed1_ub[a]-sed1_mu[a], sed2_ub[a]-sed2_mu[a], sed3_ub[a]-sed3_mu[a], sed4_ub[a]-sed4_mu[a]]
-            
-            fig = plt.figure(figsize=(6,4))
-            ax = fig.add_subplot(111)
-            ax.set_facecolor('#f2f2f3')
-            #if self.problem ==1:
-                #ax.plot(self.initial_sed[a,:], cy, linestyle='--', linewidth=self.width, marker='.',color='k', label='True')
-            ax.plot(cmu, cy, linestyle='-', linewidth=1,marker='.', color='sandybrown', label='Estimate')
-            ax.errorbar(cmu[0:2],cy[0:2],xerr=[c_lb[0:2],c_ub[0:2]],capsize=5,elinewidth=1, color='darksalmon',mfc='darksalmon',fmt='.',label=None)
-            ax.errorbar(cmu[2:4],cy[2:4],xerr=[c_lb[2:4],c_ub[2:4]],capsize=5,elinewidth=1, color='sienna',mfc='sienna',fmt='.',label=None)
-
-            ax.tick_params(axis='both', which='major', labelsize=10)
-            ax.tick_params(axis='both', which='minor', labelsize=10)
-
-            ax.set_xlabel("Sediment input (m/year)", fontsize=11)
-            ax.set_ylabel("Max. growth rate", fontsize=11) 
-            
+                sed1_mu_=sed1_mu[a]
+                sed2_mu_=sed2_mu[a]
+                sed3_mu_=sed3_mu[a]
+                sed4_mu_=sed4_mu[a]
+                sed1_min=sed1_lb[a]
+                sed2_min=sed2_lb[a]
+                sed3_min=sed3_lb[a]
+                sed4_min=sed4_lb[a]
+                sed1_max=sed1_ub[a]
+                sed2_max=sed2_ub[a]
+                sed3_max=sed3_ub[a]
+                sed4_max=sed4_ub[a]
+                sed1_med=np.median(pos_sed1[:,a])
+                sed2_med=np.median(pos_sed2[:,a])
+                sed3_med=np.median(pos_sed3[:,a])
+                sed4_med=np.median(pos_sed4[:,a])
+                sed1_mode, count=stats.mode(pos_sed1[:,a])
+                sed2_mode, count=stats.mode(pos_sed2[:,a])
+                sed3_mode, count=stats.mode(pos_sed3[:,a])
+                sed4_mode, count=stats.mode(pos_sed4[:,a])
 
 
-            plt.title('Sediment exposure threshold function\n(%s assemblage)' % (a_labels[a]), size=11, y=1.06)
-            #plt.ylabel('Proportion of maximum growth rate [%]',size=self.font+1)
-            #plt.xlabel('Sediment input [m/year]',size=self.font+1)
-            plt.ylim(-2.,110)
-            lgd = plt.legend(frameon=False, prop={'size':10}, bbox_to_anchor = (1.,0.2))
-            plt.savefig('%s/sediment_response_%s.pdf' % (self.folder, a+1), bbox_extra_artists=(lgd,),bbox_inches='tight',dpi=300,transparent=False)
-            plt.clf()
+                with file(('%s/summ_stats.txt' % (self.folder)),'a') as outfile:
+                    #outfile.write('\n# Sediment threshold: {0}\n'.format(a_labels[a]))
+                    outfile.write('5TH %ILE, 95TH %ILE, MEAN, MEDIAN\n')
+                    outfile.write('Sed1\n{0}, {1}, {2}, {3}\n'.format(sed1_min,sed1_max,sed1_mu_,sed1_med))
+                    outfile.write('Sed2\n{0}, {1}, {2}, {3}\n'.format(sed2_min,sed2_max,sed2_mu_,sed2_med))
+                    outfile.write('Sed3\n{0}, {1}, {2}, {3}\n'.format(sed3_min,sed3_max,sed3_mu_,sed3_med))
+                    outfile.write('Sed4\n{0}, {1}, {2}, {3}\n'.format(sed4_min,sed4_max,sed4_mu_,sed4_med))
+                    outfile.write('Modes\n\tSed1:\t{0}\n\tSed2:\t{1}\n\tSed3:\t{2}\n\tSed4:\t{3}'.format(sed1_mode,sed2_mode,sed3_mode,sed4_mode))
+
+                cy = [0,100,100,0]
+                cmu = [sed1_mu[a], sed2_mu[a], sed3_mu[a], sed4_mu[a]]
+                c_lb = [sed1_mu[a]-sed1_lb[a], sed2_mu[a]-sed2_lb[a], sed3_mu[a]-sed3_lb[a], sed4_mu[a]-sed4_lb[a]]
+                c_ub = [sed1_ub[a]-sed1_mu[a], sed2_ub[a]-sed2_mu[a], sed3_ub[a]-sed3_mu[a], sed4_ub[a]-sed4_mu[a]]
+                
+                fig = plt.figure(figsize=(6,4))
+                ax = fig.add_subplot(111)
+                ax.set_facecolor('#f2f2f3')
+                #if self.problem ==1:
+                    #ax.plot(self.initial_sed[a,:], cy, linestyle='--', linewidth=1, marker='.',color='k', label='True')
+                ax.plot(cmu, cy, linestyle='-', linewidth=1,marker='.', color='sandybrown', label='Estimate')
+                ax.errorbar(cmu[0:2],cy[0:2],xerr=[c_lb[0:2],c_ub[0:2]],capsize=5,elinewidth=1, color='darksalmon',mfc='darksalmon',fmt='.',label=None)
+                ax.errorbar(cmu[2:4],cy[2:4],xerr=[c_lb[2:4],c_ub[2:4]],capsize=5,elinewidth=1, color='sienna',mfc='sienna',fmt='.',label=None)
+
+                ax.tick_params(axis='both', which='major', labelsize=10)
+                ax.tick_params(axis='both', which='minor', labelsize=10)
+
+                ax.set_xlabel("Sediment input (m/year)", fontsize=11)
+                ax.set_ylabel("Max. growth rate", fontsize=11) 
+                
+
+
+                plt.title('Sediment exposure threshold function\n(%s assemblage)' % (a_labels[a]), size=11, y=1.06)
+                #plt.ylabel('Proportion of maximum growth rate [%]',size=self.font+1)
+                #plt.xlabel('Sediment input [m/year]',size=self.font+1)
+                plt.ylim(-2.,110)
+                lgd = plt.legend(frameon=False, prop={'size':10}, bbox_to_anchor = (1.,0.2))
+                plt.savefig('%s/sediment_response_%s.pdf' % (self.folder, a+1), bbox_extra_artists=(lgd,),bbox_inches='tight',dpi=300,transparent=False)
+                plt.clf()
 
         flow1_mu, flow1_ub,flow1_lb, flow2_mu, flow2_ub,flow2_lb, flow3_mu, flow3_ub,flow3_lb, flow4_mu, flow4_ub,flow4_lb = (np.zeros(self.communities) for i in range(12))
-      
-        for a in range(self.communities):
-            flow1_mu[a] = np.mean(pos_flow1[:,a])
-            flow1_ub[a] = np.percentile(pos_flow1[:,a], 95, axis=0)
-            flow1_lb[a] = np.percentile(pos_flow1[:,a], 5, axis=0)
-            
-            flow2_mu[a] = np.mean(pos_flow2[:,a])
-            flow2_ub[a] = np.percentile(pos_flow2[:,a], 95, axis=0)
-            flow2_lb[a] = np.percentile(pos_flow2[:,a], 5, axis=0)
-            
-            flow3_mu[a] = np.mean(pos_flow3[:,a])
-            flow3_ub[a] = np.percentile(pos_flow3[:,a], 95, axis=0)
-            flow3_lb[a] = np.percentile(pos_flow3[:,a], 5, axis=0)
-            
-            flow4_mu[a] = np.mean(pos_flow4[:,a])
-            flow4_ub[a] = np.percentile(pos_flow4[:,a], 95, axis=0)
-            flow4_lb[a] = np.percentile(pos_flow4[:,a], 5, axis=0)
+        if (True):
+            for a in range(self.communities):
+                flow1_mu[a] = np.mean(pos_flow1[:,a])
+                flow1_ub[a] = np.percentile(pos_flow1[:,a], 95, axis=0)
+                flow1_lb[a] = np.percentile(pos_flow1[:,a], 5, axis=0)
+                
+                flow2_mu[a] = np.mean(pos_flow2[:,a])
+                flow2_ub[a] = np.percentile(pos_flow2[:,a], 95, axis=0)
+                flow2_lb[a] = np.percentile(pos_flow2[:,a], 5, axis=0)
+                
+                flow3_mu[a] = np.mean(pos_flow3[:,a])
+                flow3_ub[a] = np.percentile(pos_flow3[:,a], 95, axis=0)
+                flow3_lb[a] = np.percentile(pos_flow3[:,a], 5, axis=0)
+                
+                flow4_mu[a] = np.mean(pos_flow4[:,a])
+                flow4_ub[a] = np.percentile(pos_flow4[:,a], 95, axis=0)
+                flow4_lb[a] = np.percentile(pos_flow4[:,a], 5, axis=0)
 
-            flow1_mu_ = flow1_mu[a]
-            flow2_mu_ = flow2_mu[a]
-            flow3_mu_ = flow3_mu[a]
-            flow4_mu_ = flow4_mu[a]
-            flow1_min= flow1_lb[a]
-            flow1_max=flow1_ub[a]
-            flow1_med=np.median(pos_flow1[:,a])
-            flow2_min=flow2_lb[a]
-            flow2_max=flow2_ub[a]
-            flow2_med=np.median(pos_flow2[:,a])
-            flow3_min=flow3_lb[a]
-            flow3_max=flow3_ub[a]
-            flow3_med=np.median(pos_flow3[:,a])
-            flow4_min=flow4_lb[a]
-            flow4_max=flow4_ub[a]
-            flow4_med=np.median(pos_flow4[:,a])
-            flow1_mode, count= stats.mode(pos_flow1[:,a])
-            flow2_mode, count= stats.mode(pos_flow2[:,a])
-            flow3_mode, count= stats.mode(pos_flow3[:,a])
-            flow4_mode, count= stats.mode(pos_flow4[:,a])
+                flow1_mu_ = flow1_mu[a]
+                flow2_mu_ = flow2_mu[a]
+                flow3_mu_ = flow3_mu[a]
+                flow4_mu_ = flow4_mu[a]
+                flow1_min= flow1_lb[a]
+                flow1_max=flow1_ub[a]
+                flow1_med=np.median(pos_flow1[:,a])
+                flow2_min=flow2_lb[a]
+                flow2_max=flow2_ub[a]
+                flow2_med=np.median(pos_flow2[:,a])
+                flow3_min=flow3_lb[a]
+                flow3_max=flow3_ub[a]
+                flow3_med=np.median(pos_flow3[:,a])
+                flow4_min=flow4_lb[a]
+                flow4_max=flow4_ub[a]
+                flow4_med=np.median(pos_flow4[:,a])
+                flow1_mode, count= stats.mode(pos_flow1[:,a])
+                flow2_mode, count= stats.mode(pos_flow2[:,a])
+                flow3_mode, count= stats.mode(pos_flow3[:,a])
+                flow4_mode, count= stats.mode(pos_flow4[:,a])
 
-            with file(('%s/summ_stats.txt' % (self.folder)),'a') as outfile:
-                outfile.write('\n# Water flow threshold: {0}\n'.format(a_labels[a]))
-                outfile.write('#5TH %ILE, 95TH %ILE, MEAN, MEDIAN\n')
-                outfile.write('# flow1\n{0}, {1}, {2}, {3}\n'.format(flow1_min,flow1_max,flow1_mu_,flow1_med))
-                outfile.write('# flow2\n{0}, {1}, {2}, {3}\n'.format(flow2_min,flow2_max,flow2_mu_,flow2_med))
-                outfile.write('# flow3\n{0}, {1}, {2}, {3}\n'.format(flow3_min,flow3_max,flow3_mu_,flow3_med))
-                outfile.write('# flow4\n{0}, {1}, {2}, {3}\n'.format(flow4_min,flow4_max,flow4_mu_,flow4_med))
-                outfile.write('Modes\n\tFlow1:\t{0}\n\tFlow2:\t{1}\n\tFlow3:\t{2}\n\tFlow4:\t{3}'.format(flow1_mode,flow2_mode,flow3_mode,flow4_mode))
+                with file(('%s/summ_stats.txt' % ( self.folder)),'a') as outfile:
+                    #outfile.write('\n# Water flow threshold: {0}\n'.format(a_labels[a]))
+                    outfile.write('#5TH %ILE, 95TH %ILE, MEAN, MEDIAN\n')
+                    outfile.write('# flow1\n{0}, {1}, {2}, {3}\n'.format(flow1_min,flow1_max,flow1_mu_,flow1_med))
+                    outfile.write('# flow2\n{0}, {1}, {2}, {3}\n'.format(flow2_min,flow2_max,flow2_mu_,flow2_med))
+                    outfile.write('# flow3\n{0}, {1}, {2}, {3}\n'.format(flow3_min,flow3_max,flow3_mu_,flow3_med))
+                    outfile.write('# flow4\n{0}, {1}, {2}, {3}\n'.format(flow4_min,flow4_max,flow4_mu_,flow4_med))
+                    outfile.write('Modes\n\tFlow1:\t{0}\n\tFlow2:\t{1}\n\tFlow3:\t{2}\n\tFlow4:\t{3}'.format(flow1_mode,flow2_mode,flow3_mode,flow4_mode))
 
-            cy = [0,100,100,0]
-            cmu = [flow1_mu[a], flow2_mu[a], flow3_mu[a], flow4_mu[a]]
-            c_lb = [flow1_mu[a]-flow1_lb[a], flow2_mu[a]-flow2_lb[a], flow3_mu[a]-flow3_lb[a], flow4_mu[a]-flow4_lb[a]]
-            c_ub = [flow1_ub[a]-flow1_mu[a], flow2_ub[a]-flow2_mu[a], flow3_ub[a]-flow3_mu[a], flow4_ub[a]-flow4_mu[a]]
+                cy = [0,100,100,0]
+                cmu = [flow1_mu[a], flow2_mu[a], flow3_mu[a], flow4_mu[a]]
+                c_lb = [flow1_mu[a]-flow1_lb[a], flow2_mu[a]-flow2_lb[a], flow3_mu[a]-flow3_lb[a], flow4_mu[a]-flow4_lb[a]]
+                c_ub = [flow1_ub[a]-flow1_mu[a], flow2_ub[a]-flow2_mu[a], flow3_ub[a]-flow3_mu[a], flow4_ub[a]-flow4_mu[a]]
 
-            
-            fig = plt.figure(figsize=(6,4))
+                
+                fig = plt.figure(figsize=(6,4))
 
-            params = {'legend.fontsize': 15, 'legend.handlelength': 2}
-            plt.rcParams.update(params)
-            ax = fig.add_subplot(111)
-            ax.set_facecolor('#f2f2f3')
-            #if self.problem ==1:
-                #ax.plot(self.initial_flow[a,:], cy, linestyle='--', linewidth=self.width, marker='.', color='k',label='True')
-            ax.plot(cmu, cy, linestyle='-', linewidth=1, marker='.', color='steelblue', label='Estimate')
-            ax.errorbar(cmu[0:2],cy[0:2],xerr=[c_lb[0:2],c_ub[0:2]],capsize=5,elinewidth=1,color='lightsteelblue',mfc='lightsteelblue',fmt='.',label=None)
-            ax.errorbar(cmu[2:4],cy[2:4],xerr=[c_lb[2:4],c_ub[2:4]],capsize=5,elinewidth=1,color='lightslategrey',mfc='lightslategrey',fmt='.',label=None)
+                params = {'legend.fontsize': 15, 'legend.handlelength': 2}
+                plt.rcParams.update(params)
+                ax = fig.add_subplot(111)
+                ax.set_facecolor('#f2f2f3')
+                #if self.problem ==1:
+                    #ax.plot(self.initial_flow[a,:], cy, linestyle='--', linewidth=1, marker='.', color='k',label='True')
+                ax.plot(cmu, cy, linestyle='-', linewidth=1, marker='.', color='steelblue', label='Estimate')
+                ax.errorbar(cmu[0:2],cy[0:2],xerr=[c_lb[0:2],c_ub[0:2]],capsize=5,elinewidth=1,color='lightsteelblue',mfc='lightsteelblue',fmt='.',label=None)
+                ax.errorbar(cmu[2:4],cy[2:4],xerr=[c_lb[2:4],c_ub[2:4]],capsize=5,elinewidth=1,color='lightslategrey',mfc='lightslategrey',fmt='.',label=None)
 
-            ax.tick_params(axis='both', which='major', labelsize=10)
-            ax.tick_params(axis='both', which='minor', labelsize=10)
+                ax.tick_params(axis='both', which='major', labelsize=10)
+                ax.tick_params(axis='both', which='minor', labelsize=10)
 
-            ax.set_xlabel("Fluid flow (m/sec)", fontsize=11)
-            ax.set_ylabel("Max. growth rate", fontsize=11) 
+                ax.set_xlabel("Fluid flow (m/sec)", fontsize=11)
+                ax.set_ylabel("Max. growth rate", fontsize=11) 
 
-            plt.title('Hydrodynamic energy exposure threshold function\n(%s assemblage)' % (a_labels[a]), size=11, y=1.06)
-            #plt.ylabel('Proportion of maximum growth rate [%]', size=self.font+1)
-            #plt.xlabel('Fluid flow [m/sec]', size=self.font+1)
-            plt.ylim(-2.,110.)
-            lgd = plt.legend(frameon=False, prop={'size':10}, bbox_to_anchor = (1.,0.2))
-            plt.savefig('%s/flow_response_%s.pdf' % (self.folder, a+1),  bbox_extra_artists=(lgd,), bbox_inches='tight',dpi=300,transparent=False)
-            plt.clf()
+                plt.title('Hydrodynamic energy exposure threshold function\n(%s assemblage)' % (a_labels[a]), size=11, y=1.06)
+                #plt.ylabel('Proportion of maximum growth rate [%]', size=self.font+1)
+                #plt.xlabel('Fluid flow [m/sec]', size=self.font+1)
+                plt.ylim(-2.,110.)
+                lgd = plt.legend(frameon=False, prop={'size':10}, bbox_to_anchor = (1.,0.2))
+                plt.savefig('%s/flow_response_%s.pdf' % (self.folder, a+1),  bbox_extra_artists=(lgd,), bbox_inches='tight',dpi=300,transparent=False)
+                plt.clf()
+
+ 
 
 
     def initial_replicaproposal(self): 
@@ -1430,6 +1475,21 @@ def convert_core_format(core, communities):
 
  
 
+def core_convertbinary(core_data): 
+
+    core_binary = np.zeros((core_data.shape[0], 7))
+
+
+    for i in range(core_data.shape[0]):  
+        assem_num = int(round(core_data[i] * 7) -1)
+        core_binary[i,assem_num] = 1
+        #print(assem_num, ' assem_num')
+
+    #print(core_binary)
+
+    return core_binary
+ 
+
 def main():
 
     random.seed(time.time()) 
@@ -1458,13 +1518,13 @@ def main():
     #samples = 5000    # total number of samples by all the chains (replicas) in parallel tempering
     #num_chains = 10 # number of Replica's that will run on separate cores. Note that cores will be shared automatically - if enough cores not available
       
-    burn_in = 0.4 
+    burn_in = 0.2 
 
 
     #parameters for Parallel Tempering
-    maxtemp = 2 
+    maxtemp = 5 
 
-    pt_stage = 0.75
+    pt_stage = 0.90
     
      
  
@@ -1543,7 +1603,7 @@ def main():
 
         true_vec_parameters = np.loadtxt(problemfolder +'data_new/core_3asemb/true_values.txt') '''
 
-    elif problem ==1:
+    '''elif problem ==1:
 
 
         num_communities = 3 # can be 6 for real probs
@@ -1551,7 +1611,7 @@ def main():
 
         simtime = 8500
         timestep = np.arange(0,simtime+1,50)
-        xmlinput = 'input_synth.xml'
+        xmlinput = 'input_synth_.xml'
         datafile = 'data/synth_core.txt'
         core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
         core_data = np.loadtxt('data/synth_core_bi.txt')
@@ -1583,7 +1643,57 @@ def main():
         #xmlinput = 'input_synth.xml'
         #datafile = 'data/synth_core.txt'
         #core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
-        #core_data = np.loadtxt('data/synth_core_bi.txt')
+        #core_data = np.loadtxt('data/synth_core_bi.txt')'''
+
+    if problem ==1:
+        simtime = 8500
+        timestep = np.arange(0,simtime+1,50)
+        xmlinput = 'input_synth_.xml'
+        datafile = 'data/synth_core.txt'
+        core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
+        core_data = np.loadtxt('data/synth_core_bi.txt')
+
+        true_vec_parameters = np.loadtxt('data/true_values.txt')
+        problemfolder = 'Syntheticreef_results/' 
+
+
+        nCommunities = 3 
+
+    elif problem ==2:
+
+        simtime = 8500
+        timestep = np.arange(0,simtime+1,50)
+        xmlinput = 'input_hi3.xml'
+        datafile = 'data/hi3.txt'
+        core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
+        core_data =   core_convertbinary(np.genfromtxt(datafile, usecols=(1), unpack = True) )  
+        true_vec_parameters = np.zeros(51)#np.loadtxt('data/true_values_six.txt') 
+        problemfolder = 'Henonreef_results/'
+ 
+        nCommunities = 6
+
+    elif problem ==3:
+        simtime = 8500
+        timestep = np.arange(0,simtime+1,50)
+        xmlinput = 'input_oti5.xml'
+        datafile = 'data/oti5.txt'
+        core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
+        core_data =   core_convertbinary(np.genfromtxt(datafile, usecols=(1), unpack = True) )  
+        true_vec_parameters = np.zeros(51)#np.loadtxt('data/true_values_six.txt') 
+        problemfolder = 'Onetreereef_results/'
+
+        nCommunities = 6
+    elif problem ==4:
+        simtime = 8500
+        timestep = np.arange(0,simtime+1,50)
+        xmlinput = 'input_oti2.xml'
+        datafile = 'data/oti2.txt'
+        core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
+        core_data =   core_convertbinary(np.genfromtxt(datafile, usecols=(1), unpack = True) )  
+        true_vec_parameters = np.zeros(51)#np.loadtxt('data/true_values_six.txt') 
+
+        nCommunities = 6
+        problemfolder = 'Onetreereef_results/'
 
  
 
@@ -1613,11 +1723,14 @@ def main():
     timer_start = time.time()
 
 
+    num_param = 3 + (nCommunities * 8 )  # 3  for the mal, cim_ax, cim_ay 
+
+
     #def __init__(self,num_chains,communities, NumSample,fname,xmlinput,num_param,maxtemp,swap_interval,simtime,true_vec_parameters,   core_depths, core_data, vis, num_communities,   maxlimits_vec, minlimits_vec , stepratio_vec,     burn_in):
 
     
 
-    pt = ParallelTempering(problem, num_chains,num_communities, samples,fname,xmlinput,num_param,maxtemp,swap_interval,simtime, true_vec_parameters, core_depths, core_data, vis, max_limits, min_limits, stepsize_ratio, burn_in,  pt_stage)
+    pt = ParallelTempering(problem, num_chains,nCommunities, samples,fname,xmlinput,num_param,maxtemp,swap_interval,simtime, true_vec_parameters, core_depths, core_data, vis, max_limits, min_limits, stepsize_ratio, burn_in,  pt_stage)
      
     pt.initialise_chains()
     #-------------------------------------------------------------------------------------
@@ -1639,6 +1752,14 @@ def main():
     
 
     print('Successfully sampled') 
+
+
+    plt.plot( likelihood_rep.flatten()) 
+    plt.xlabel('Samples')
+    plt.ylabel('likelihood') 
+    plt.savefig( fname+'/rep_likelihoodlist.png')
+
+
 
 
 
@@ -1713,7 +1834,7 @@ def main():
 
     x_data =  core_depths
 
-    data_vec = convert_core_format(core_data, num_communities) 
+    data_vec = convert_core_format(core_data, nCommunities) 
   
 
     font = 8

@@ -23,7 +23,7 @@ cmap=plt.cm.Set2
 c = cycler('color', cmap(np.linspace(0,1,8)) )
 plt.rcParams["axes.prop_cycle"] = c
 
-config = 2 # for parameter limits config
+config = 0 # for parameter limits config
 
 class MCMC():
     def __init__(self, simtime, samples, communities, core_data, core_depths,timestep,filename, xmlinput,   vis, true_vec_parameters, problem, num_replica, max_temp, burn_in, pt_stage):
@@ -116,7 +116,7 @@ class MCMC():
             colors = terrain(np.linspace(0, 1.8, nbcolors))
             nbcolors = len(reef.core.layTime)+3
             colors2 = plasma(np.linspace(0, 1, nbcolors))
-            reef.plot.drawCore(lwidth = 3, colsed=colors, coltime = colors2, size=(9,8), font=8, dpi=300)
+            #reef.plot.drawCore(lwidth = 3, colsed=colors, coltime = colors2, size=(9,8), font=8, dpi=300)
         output_core = reef.plot.core_timetodepth(self.communities, self.core_depths) #modelPlot.py
         #predicted_core = reef.convert_core(self.communities, output_core, self.core_depths) #model.py
         #return predicted_core 
@@ -142,7 +142,12 @@ class MCMC():
 
 
         # PLOT SEDIMENT AND FLOW RESPONSE THRESHOLDS #
-        a_labels = ['Shallow windward', 'Moderate-deep windward', 'Deep windward']#, 'Shallow leeward', 'Moderate-deep leeward', 'Deep leeward']
+
+        if self.communities == 3:
+        	a_labels = ['Shallow windward', 'Moderate-deep windward', 'Deep windward']#, 'Shallow leeward', 'Moderate-deep leeward', 'Deep leeward']
+    	else:
+    		a_labels = ['Windward Shallow', 'Windward Mod-deep', 'Windward Deep', 'Sediment','Leeward Shallow', 'Leeward Mod-deep', 'Leeward Deep']
+    	 
         
         sed1_mu, sed1_ub, sed1_lb, sed2_mu, sed2_ub, sed2_lb, sed3_mu, sed3_ub, sed3_lb, sed4_mu, sed4_ub, sed4_lb = (np.zeros(self.communities) for i in range(12))
         if ((self.sedsim != False)):
@@ -186,7 +191,7 @@ class MCMC():
 
 
                 with file(('%s/summ_stats.txt' % (self.filename)),'a') as outfile:
-                    outfile.write('\n# Sediment threshold: {0}\n'.format(a_labels[a]))
+                    #outfile.write('\n# Sediment threshold: {0}\n'.format(a_labels[a]))
                     outfile.write('5TH %ILE, 95TH %ILE, MEAN, MEDIAN\n')
                     outfile.write('Sed1\n{0}, {1}, {2}, {3}\n'.format(sed1_min,sed1_max,sed1_mu_,sed1_med))
                     outfile.write('Sed2\n{0}, {1}, {2}, {3}\n'.format(sed2_min,sed2_max,sed2_mu_,sed2_med))
@@ -265,7 +270,7 @@ class MCMC():
                 flow4_mode, count= stats.mode(pos_flow4[:,a])
 
                 with file(('%s/summ_stats.txt' % (self.filename)),'a') as outfile:
-                    outfile.write('\n# Water flow threshold: {0}\n'.format(a_labels[a]))
+                    #outfile.write('\n# Water flow threshold: {0}\n'.format(a_labels[a]))
                     outfile.write('#5TH %ILE, 95TH %ILE, MEAN, MEDIAN\n')
                     outfile.write('# flow1\n{0}, {1}, {2}, {3}\n'.format(flow1_min,flow1_max,flow1_mu_,flow1_med))
                     outfile.write('# flow2\n{0}, {1}, {2}, {3}\n'.format(flow2_min,flow2_max,flow2_mu_,flow2_med))
@@ -391,6 +396,26 @@ class MCMC():
 
 
     def likelihood_func(self, reef, core_data, input_v):
+ 
+        mal =   random.random() /5
+        ax =  random.random()/10 * -1
+        ay =  random.random()/10 * -1
+ 
+
+        sed1=[0.0009, 0.0015, 0.0023]
+        sed2=[0.0015, 0.0017, 0.0024]
+        sed3=[0.0016, 0.0028, 0.0027]
+        sed4=[0.0017, 0.0031, 0.0043]
+        flow1=[0.055, 0.008 ,0.]
+        flow2=[0.082, 0.051, 0.]
+        flow3=[0.259, 0.172, 0.058] 
+        flow4=[0.288, 0.185, 0.066]  
+
+
+        v_proposal = np.concatenate((sed1,sed2,sed3,sed4,flow1,flow2,flow3,flow4))
+        input_v = np.append(v_proposal,(ax,ay,mal))
+
+
         pred_core = self.run_Model(reef, input_v)
         pred_core = pred_core.T
         intervals = pred_core.shape[0]
@@ -581,9 +606,9 @@ class MCMC():
         for x in range(self.communities):#-3):
             for s in range(tmatrix.shape[1]):
                 t2matrix[x,s] = tmatrix[x,s] + np.random.normal(0,self.step_sed)
-                if t2matrix[x,s] >= self.sedlimits[x,1]:
+                if t2matrix[x,s] >= self.sedlim[1]:
                     t2matrix[x,s] = tmatrix[x,s]
-                elif t2matrix[x,s] <= self.sedlimits[x,0]:
+                elif t2matrix[x,s] <= 0:
                     t2matrix[x,s] = tmatrix[x,s]
             # reorder each row , then transpose back as sed1, etc.
         tmp = np.zeros((self.communities,4))
@@ -605,9 +630,9 @@ class MCMC():
         for x in range(self.communities):#-3):
             for s in range(tmatrix.shape[1]):
                 t2matrix[x,s] = tmatrix[x,s] + np.random.normal(0,self.step_flow)
-                if t2matrix[x,s] >= self.flowlimits[x,1]:
+                if t2matrix[x,s] >= self.flowlim[1]:
                     t2matrix[x,s] = tmatrix[x,s]
-                elif t2matrix[x,s] <= self.flowlimits[x,0]:
+                elif t2matrix[x,s] <= 0:
                     t2matrix[x,s] = tmatrix[x,s]
             # reorder each row , then transpose back as flow1, etc.
         tmp = np.zeros((self.communities,4))
@@ -666,9 +691,9 @@ class MCMC():
             temp_ladder.append(temp)
             temp += tmpr_rate
 
-        temp_ladder = [1, 1.05, 1.1, 1.15 , 1.2, 1.3, 1.4, 1.6, 1.9, 2.5]
+        #temp_ladder = [1, 1.05, 1.1, 1.15 , 1.2, 1.3, 1.4, 1.6, 1.9, 2.5]
 
-        #temp_ladder = [1, 1 , 1 , 1  , 1 , 1 , 1 , 1 , 1 , 1 ]
+        temp_ladder = [1, 1 , 1 , 1  , 1 , 1 , 1 , 1 , 1 , 1 ]
 
         return   temp_ladder
 
@@ -910,7 +935,8 @@ class MCMC():
         diffscore = rep_diffscore[:,burnin:]
 
 
-        for s in range( 0, num_param):   
+        for s in range( 0, num_param):  
+            print self.true_values[s]  
             
             self.plot_figure(posterior[s,:], 'pos_distri_'+str(s),  self.true_values[s] , nreplicas ) 
 
@@ -929,7 +955,27 @@ class MCMC():
 
 
         size = 14
- 
+
+        #fig, ax = plt.subplots()
+
+
+        '''plt.tick_params(labelsize=size)
+        params = {'legend.fontsize': size, 'legend.handlelength': 2}
+        plt.rcParams.update(params)
+        plt.grid(alpha=0.75)
+
+        plt.hist(list_points,  bins = 20, color='#0504aa',
+                            alpha=0.7)   
+
+        plt.title("Posterior distribution ", fontsize = size)
+        plt.xlabel(' Parameter value  ', fontsize = size)
+        plt.ylabel(' Frequency ', fontsize = size)
+        if self.problem == 1:
+            plt.axvline(x=real_value, linewidth=2, color='r')
+            print real_value, ' is real'
+        #plt.tight_layout()  
+        #ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+        plt.autoscale()'''
 
 
         fig, ax = plt.subplots()
@@ -960,7 +1006,24 @@ class MCMC():
         plt.savefig(fname   +'/posterior/'+ title  + '_posterior.pdf')
         plt.clf()
 
- 
+
+        '''plt.tick_params(labelsize=size)
+        params = {'legend.fontsize': size, 'legend.handlelength': 2}
+        plt.rcParams.update(params)
+        plt.grid(alpha=0.75)
+
+        listx = np.asarray(np.split(list_points,  nreplicas ))
+        plt.plot(listx.T)   
+
+        plt.title("Parameter trace plot", fontsize = size)
+        plt.xlabel(' Number of Samples  ', fontsize = size)
+        plt.ylabel(' Parameter value ', fontsize = size)
+        #plt.tight_layout()  
+        plt.autoscale()'''
+
+
+        #p = np.linspace(1000, 500, 100)
+        #T = np.linspace(300, 200, p.size)
 
 
         fig, ax = plt.subplots()
@@ -988,6 +1051,23 @@ def make_directory (directory):
         os.makedirs(directory)
 
 
+def core_convertbinary(core_data):
+
+
+
+
+    core_binary = np.zeros((core_data.shape[0], 7))
+
+
+    for i in range(core_data.shape[0]):  
+    	assem_num = int(round(core_data[i] * 7) -1)
+    	core_binary[i,assem_num] = 1
+    	#print(assem_num, ' assem_num')
+
+    #print(core_binary)
+
+    return core_binary
+
 
 #####################################################################
 #####################################################################
@@ -1001,23 +1081,22 @@ def main():
     random.seed(time.time())
 
 
-    samples=100
-    num_param = 27
+    samples=40
 
-    num_replica = 10
-    max_temp = 2.5
+    num_replica = 8  # 1 replica means single chain MCMC
+    max_temp = 5
 
-    burn_in = 0.5
-    pt_stage = 0.95
+    burn_in = 0.1
+    pt_stage = 1.0
 
-    problem = 2 # 1. is synthetic core, 2. is Henon island real core 3. OTI (to be tested later)
+    problem = 1 # 1. is synthetic core (3 communities/assembledges), 2. is Henon island real core (3 communities/assembledges) 3.  (see xml file )
 
-    true_vec_parameters = np.zeros(num_param)
+ 
 
     if problem ==1:
     	simtime = 8500
     	timestep = np.arange(0,simtime+1,50)
-    	xmlinput = 'input_synth.xml'
+    	xmlinput = 'input_synth_.xml'
     	datafile = 'data/synth_core.txt'
     	core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
     	core_data = np.loadtxt('data/synth_core_bi.txt')
@@ -1026,36 +1105,81 @@ def main():
 
         print true_vec_parameters, ' true values'
 
+
+    	nCommunities = 3
+
+
     elif problem ==2:
     	simtime = 8500
     	timestep = np.arange(0,simtime+1,50)
     	xmlinput = 'input_hi3_threeasembleges.xml'
     	datafile = 'data/hi3.txt'
     	core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
-    	core_data = np.loadtxt('data/hi3_binary.txt')
+    	core_data = np.loadtxt('data/hi3_binary.txt') 
+    	nCommunities = 3
+
 
     elif problem ==3:
     	simtime = 8500
     	timestep = np.arange(0,simtime+1,50)
-    	#xmlinput = 'input_synth.xml'
-    	#datafile = 'data/synth_core.txt'
-    	#core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
-    	#core_data = np.loadtxt('data/synth_core_bi.txt')
+    	xmlinput = 'input_synth_sixassem.xml'
+    	datafile = 'data/synth_core.txt'
+    	core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
+    	core_data =   core_convertbinary(np.genfromtxt(datafile, usecols=(1), unpack = True) )  
+        true_vec_parameters = np.zeros(51)#np.loadtxt('data/true_values_six.txt')
+
+        print true_vec_parameters, ' true values' 
+
+    	nCommunities = 6 # no assem
+
+
+
+    elif problem ==4:
+
+    	simtime = 8500
+    	timestep = np.arange(0,simtime+1,50)
+    	xmlinput = 'input_hi3.xml'
+    	datafile = 'data/hi3.txt'
+    	core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
+    	core_data =   core_convertbinary(np.genfromtxt(datafile, usecols=(1), unpack = True) )  
+        true_vec_parameters = np.zeros(51)#np.loadtxt('data/true_values_six.txt') 
+ 
+    	nCommunities = 6
+
+    elif problem ==5:
+    	simtime = 8500
+    	timestep = np.arange(0,simtime+1,50)
+    	xmlinput = 'input_oti5.xml'
+    	datafile = 'data/oti5.txt'
+    	core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
+    	core_data =   core_convertbinary(np.genfromtxt(datafile, usecols=(1), unpack = True) )  
+        true_vec_parameters = np.zeros(51)#np.loadtxt('data/true_values_six.txt') 
+
+    	nCommunities = 6
+    elif problem ==6:
+        simtime = 8500
+        timestep = np.arange(0,simtime+1,50)
+        xmlinput = 'input_oti2.xml'
+        datafile = 'data/oti2.txt'
+        core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
+        core_data =   core_convertbinary(np.genfromtxt(datafile, usecols=(1), unpack = True) )  
+        true_vec_parameters = np.zeros(51)#np.loadtxt('data/true_values_six.txt') 
+
+        nCommunities = 6
 
 
     description = ''
-    nCommunities = 3
 
 
 
     vis = [True, True] # first for initialisation, second for cores
     #sedsim, flowsim = True, True
     run_nb = 0
-    while os.path.exists('results_multinomial_%s' % (run_nb)):
+    while os.path.exists('results_syn%s' % (run_nb)):
         run_nb+=1
-    if not os.path.exists('results_multinomial_%s' % (run_nb)):
-        os.makedirs('results_multinomial_%s' % (run_nb))
-    filename = ('results_multinomial_%s' % (run_nb))
+    if not os.path.exists('results_syn%s' % (run_nb)):
+        os.makedirs('results_syn%s' % (run_nb))
+    filename = ('results_syn%s' % (run_nb))
 
     
     make_directory(filename+'/posterior')
@@ -1209,8 +1333,12 @@ def main():
 
     font = 8
 
-    x_labels = ['Shallow', 'Mod-deep', 'Deep', 'Sediment','No growth']
-    x_values = [1,2,3,4,5]
+    if nCommunities == 3:  
+    	x_labels = ['Shallow', 'Mod-deep', 'Deep', 'Sediment', 'No growth', ]
+    	x_values = [1,2,3,4,5]
+    else: 
+    	x_labels = [ 'W shallow', 'W Mod-deep', 'W Deep', 'Sediment','L Shallow', 'L Mod-deep', 'L Deep', 'No growth']
+    	x_values = [1,2,3,4,5,6,7, 8 ]
 
 
     fig = plt.figure(figsize=(4,4))
