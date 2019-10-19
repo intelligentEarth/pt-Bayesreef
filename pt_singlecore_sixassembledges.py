@@ -396,10 +396,13 @@ class MCMC():
 
 
     def likelihood_func(self, reef, core_data, input_v):
+
+
+        ax = -0.10
+        ay = -0.10
+        mal = 0.01
  
-        mal =   random.random() /5
-        ax =  random.random()/10 * -1
-        ay =  random.random()/10 * -1
+ 
  
 
         sed1=[0.0009, 0.0015, 0.0023]
@@ -413,7 +416,11 @@ class MCMC():
 
 
         v_proposal = np.concatenate((sed1,sed2,sed3,sed4,flow1,flow2,flow3,flow4))
-        input_v = np.append(v_proposal,(ax,ay,mal))
+        #input_v = np.append(v_proposal,(ax,ay,mal))
+
+        #input_v[12: 24] = v_proposal[12:24] 
+
+    
 
 
         pred_core = self.run_Model(reef, input_v)
@@ -437,8 +444,13 @@ class MCMC():
         z = z + 0.1
         z = z/(1+(1+self.communities)*0.1)
         loss = np.log(z)
-        # print 'sum of loss:', np.sum(loss)        
-        return [np.sum(loss) *(1.0/self.adapttemp), pred_core, diff_]
+        # print 'sum of loss:', np.sum(loss)    
+
+        lhood = np.sum(loss) *(1.0/self.adapttemp)
+
+        print(input_v, ' input_v * ', lhood)   
+
+        return [lhood, pred_core, diff_]
 
     def save_core(self,reef,naccept):
         path = '%s/%s' % (self.filename, naccept)
@@ -491,36 +503,7 @@ class MCMC():
 
     def initial_replicaproposal(self): 
 
-        """"Windward sedlim = 0.005, flowlim = 0.3
-            sedlim_1 = [[0., 0.0035]]
-            sedlim_2 = [[0.001,0.0035]]
-            sedlim_3 = [[0.001,0.005]]
-            sedlim_4 = sedlim_5 = sedlim_6 = [[0.,0.]] 
-            # sedlim_4 = [[0.001,0.0035]]
-            # sedlim_5 = [[0.002,0.004]]
-            # sedlim_6 = [[0.002,0.005]]
-            flowlim_1 = [[0.02,0.3]]
-            flowlim_2 = [[0.005.,0.2]]
-            flowlim_3 = [[0.,0.15]]
-            flowlim_4 = [[0.005,0.2]]
-            flowlim_5 = [[0.002,0.1]]
-            flowlim_6 = [[0.,0.1]]
-            Leeward sedlim = 0.005, flowlim = 0.2
-            # sedlim_1 = [[0.0005,0.0035]]
-            # sedlim_2 = [[0,1e-3]]
-            # sedlim_3 = [[0,2e-4]]
-            sedlim_1 = sedlim_2 = sedlim_3 = [[0.,0.]] 
-            sedlim_4 = [[0.0005,0.0035]]
-            sedlim_5 = [[0.0005, 0.003]]
-            sedlim_6 = [[0. 0.005]]
-            flowlim_1 = [[0.05,0.3]]
-            flowlim_2 = [[0.05,0.3]]
-            flowlim_3 = [[0,0.2]]
-            flowlim_4 = [[0.01,0.3]]
-            flowlim_5 = [[0,0.2]]
-            flowlim_6 = [[0,0.1]]
-        """
-
+ 
         sed1 = np.zeros(self.communities)
         sed2 = np.zeros(self.communities)
         sed3 = np.zeros(self.communities)
@@ -1081,13 +1064,13 @@ def main():
     random.seed(time.time())
 
 
-    samples=40
+    samples=100
 
     num_replica = 8  # 1 replica means single chain MCMC
     max_temp = 5
 
-    burn_in = 0.1
-    pt_stage = 1.0
+    burn_in = 0.3
+    pt_stage = 0.8
 
     problem = 1 # 1. is synthetic core (3 communities/assembledges), 2. is Henon island real core (3 communities/assembledges) 3.  (see xml file )
 
@@ -1217,6 +1200,9 @@ def main():
     print  mean_score, std_score, accept_ratio, time_taken, '  mean score, std score, accept_ratio, time'
 
     np.savetxt(filename+'/score_summary.txt', [mean_score, std_score, accept_ratio, time_taken], fmt='%1.2f') 
+
+
+    np.savetxt(filename+'/rep_likelihoodlist.txt', rep_likelihoodlist, fmt='%1.2f')  
 
 
 

@@ -7,7 +7,7 @@ echo Running all
  
 for x in  1  
 	do 	
-			python pt_multicore.py  1 8 1 200
+			python pt_multicore.py  1 1 1 100
   
 	done 
 

@@ -106,16 +106,67 @@ class ptReplica(multiprocessing.Process):
 
         self.pt_stage =  pt_stage
 
+
+    def run_Model_(self,  input_vector):
+
+
+
+        reef = Model()
+ 
+        reef.convert_vector(self.communities, input_vector, self.sedsim, self.flowsim) #model.py
+        self.true_sed, self.true_flow = reef.load_xml(self.input, self.sedsim, self.flowsim)
+        # if self.vis[0] == True:
+            # reef.core.initialSetting(size=(8,2.5), size2=(8,3.5)) # View initial parameters
+        reef.run_to_time(self.simtime,showtime=100.)
+        # if self.vis[1] == True:
+        #     reef.plot.drawCore(lwidth = 3, colsed=self.colors, coltime = self.colors2, size=(9,8), font=8, dpi=300)
+        sim_output_t, sim_timelay = reef.plot.convertTimeStructure() #modelPlot.py
+        sim_output_d = reef.plot.convertDepthStructure(self.communities, self.core_depths) #modelPlot.py
+        # predicted_core = reef.convert_core(self.communities, output_core, self.core_depths) #model.py
+        # return predicted_core
+        #return sim_output_t, sim_output_d,sim_timelay
+
+        return   sim_output_d 
+
  
  
 
 
-    def run_Model(self,  input_vector):
+    def run_Model(self,   x ):
 
 
         reef = Model()
 
-        reef.convert_vector(self.communities, input_vector, self.sedsim, self.flowsim) #model.py
+        print(x, '  * input_vector * ')
+
+        input_vector = np.asarray(x)
+ 
+
+        #reef.convert_vector(self.communities, input_vector, self.sedsim, self.flowsim) #model.py
+
+        new_shape = self.communities*4 
+
+        opt_Sed = input_vector[0:new_shape].reshape(4,self.communities)
+        #print(opt_Sed, ' opt_sed ** --------------', self.adapttemp)
+        opt_Flow = input_vector[new_shape:(new_shape*2)].reshape(4,self.communities)
+        #print(opt_Flow, ' opt_sed **  --------------', self.adapttemp)
+
+
+        reef.opt_Sed = opt_Sed.T
+        reef.opt_Flow = opt_Flow.T
+        x = input_vector[new_shape*2]
+        y = input_vector[(new_shape*2)+1]
+        diagmat = np.zeros((self.communities, self.communities))
+        np.fill_diagonal(diagmat, x)
+        for i in range(0, self.communities - 1):
+            diagmat[i][i + 1] = y
+            diagmat[i + 1][i] = y
+        reef.opt_cMatrix = diagmat
+        tempParam= float(input_vector[(new_shape*2)+2])
+        reef.opt_malthusParam = np.full(self.communities, tempParam)
+
+
+
         self.initial_sed, self.initial_flow = reef.load_xml(self.input, self.sedsim, self.flowsim)
 
 
@@ -186,32 +237,52 @@ class ptReplica(multiprocessing.Process):
         return (1- score) * 100  #+ sedprop 
 
 
-    def likelihood_func(self,  core_data, input_v):
+    def likelihood_func(self,    core_data, input_v):
 
-         
+        ax = -0.10
+        ay = -0.10
+        mal = 0.01
+
  
 
-        sed1=[0.0009, 0.0015, 0.0023]  # true values for synthetic 3 asssemblege problem (flow and sed)
+          #-1493.2790256300846
+ 
+
+        '''sed1=[0.0009, 0.0015, 0.0023]  # true values for synthetic 3 asssemblege problem (flow and sed)
         sed2=[0.0015, 0.0017, 0.0024]
         sed3=[0.0016, 0.0028, 0.0027]
         sed4=[0.0017, 0.0031, 0.0043]
         flow1=[0.055, 0.008 ,0.]
         flow2=[0.082, 0.051, 0.]
         flow3=[0.259, 0.172, 0.058] 
-        flow4=[0.288, 0.185, 0.066]  
+        flow4=[0.288, 0.185, 0.066]  '''
 
 
-        v_proposal = np.concatenate((sed1,sed2,sed3,sed4,flow1,flow2,flow3,flow4))
+        #v_proposal = np.concatenate((sed1,sed2,sed3,sed4,flow1,flow2,flow3,flow4))
         #input_v = np.append(v_proposal,(ax,ay,mal))
 
-        input_v[0: 24] = v_proposal
+        #input_v[0: 12] = v_proposal[0:12] #does not work 
 
-        print(input_v, ' ** ')
+        #input_v[12: 24] = v_proposal[12:24] #works
 
+        #print(input_v.shape, input_v, ' ++++++++++++++ ')
 
-        pred_core = self.run_Model( input_v)
+        #v = np.ravel(input_v)
+
+        
+
+        #input_v[0: 24] = np.asarray(xxx_)
+
+        input_vector = input_v.tolist()
+
+ 
+ 
+
+        pred_core = self.run_Model( input_vector )
         pred_core = pred_core.T
         intervals = pred_core.shape[0]
+
+        print(pred_core[0:10,:])
         z = np.zeros((intervals,self.communities+1))   
 
         #print(z, intervals, ' is z int') 
@@ -228,9 +299,16 @@ class ptReplica(multiprocessing.Process):
         z = z + 0.1
         z = z/(1+(1+self.communities)*0.1)
         loss = np.log(z)
-        sum_loss = np.sum(loss)
-        print ('sum of loss:', sum_loss , diff_)        
-        return [sum_loss *(1.0/self.adapttemp), pred_core, diff_]
+        sum_loss = np.sum(loss) 
+
+
+        print(input_v, ' input_v * ', sum_loss, diff_)    
+
+        # *(1.0/self.adapttemp),
+
+
+
+        return [sum_loss, pred_core, diff_]
  
 
      
@@ -425,9 +503,9 @@ class ptReplica(multiprocessing.Process):
 
 
 
-        for i in range(3):
+        for i in range(1):
 
-            likelihood, rep_predcore_, rep_diffscore = self.likelihood_func(  self.core_data, v_proposal) 
+            likelihood, rep_predcore_, rep_diffscore = self.likelihood_func(   self.core_data, v_proposal.copy()) 
 
              
 
@@ -482,7 +560,7 @@ class ptReplica(multiprocessing.Process):
 
             if i == pt_samples and init_count ==0: # move to MCMC canonical
                 self.adapttemp = 1 
-                likelihood_proposal, rep_predcore_, rep_diffscore = self.likelihood_func(  self.core_data, v_proposal)  
+                likelihood_proposal, rep_predcore_, rep_diffscore = self.likelihood_func(    self.core_data, v_proposal.copy())  
 
                 init_count = 1
 
@@ -492,7 +570,7 @@ class ptReplica(multiprocessing.Process):
  
             v_proposal = self.proposal_vec(v_current)  
  
-            likelihood_proposal, rep_predcore_, rep_diffscore = self.likelihood_func(  self.core_data, v_proposal)  
+            likelihood_proposal, rep_predcore_, rep_diffscore = self.likelihood_func( self.core_data, v_proposal.copy())  
             predcore  = self.convert_core_format(rep_predcore_, self.communities)
  
             diff_likelihood = likelihood_proposal - likelihood 
@@ -1580,71 +1658,7 @@ def main():
     print(min_limits, ' min_limits')
 
 
-    
-    if problem == 0:
-        '''num_communities = 3 # can be 6 for real probs
-        num_flow = 4
-        num_sed = 4
-        simtime = 8500 
-        sedlim = [0., 0.005]
-        flowlim = [0.,0.3]
-        min_a = -0.15 # Community interaction matrix diagonal and sub-diagnoal limits
-        max_a = 0.
-        min_m = 0.
-        max_m = 0.15 # Malthusian parameter limit
-
-        maxlimits_vec, minlimits_vec = find_limits(num_communities, num_sed, num_flow, sedlim, flowlim, min_a, max_a, min_m, max_m)
-
-        stepsize_ratio  = 0.05 #   you can have different ratio values for different parameters depending on the problem. Its safe to use one value for now
-        stepratio_vec =  np.repeat(stepsize_ratio, maxlimits_vec.size) 
-        num_param = maxlimits_vec.size 
-
-        problemfolder = 'SyntheticProblem/'  # change for other reef-core (This is synthetic core) 
-
-        true_vec_parameters = np.loadtxt(problemfolder +'data_new/core_3asemb/true_values.txt') '''
-
-    '''elif problem ==1:
-
-
-        num_communities = 3 # can be 6 for real probs
-        num_param = 27
-
-        simtime = 8500
-        timestep = np.arange(0,simtime+1,50)
-        xmlinput = 'input_synth_.xml'
-        datafile = 'data/synth_core.txt'
-        core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
-        core_data = np.loadtxt('data/synth_core_bi.txt')
-
-        true_vec_parameters = np.loadtxt('data/true_values.txt')  
-        problemfolder = 'Syntheticreef_results/'  # change for other reef-core (This is synthetic core) 
-
-
-    elif problem ==2:
-
-        num_communities = 3 # can be 6 for real probs
-        num_param = 27
-        simtime = 8500
-        timestep = np.arange(0,simtime+1,50)
-        xmlinput = 'input_hi3_threeasembleges.xml'
-        datafile = 'data/hi3.txt'
-        core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
-        core_data = np.loadtxt('data/hi3_binary.txt')
-
-
-        true_vec_parameters = [] 
-
-        problemfolder = 'Henonreef_results/'  # change for other reef-core (This is synthetic core) 
-
-
-    elif problem ==3:
-        simtime = 8500
-        timestep = np.arange(0,simtime+1,50)
-        #xmlinput = 'input_synth.xml'
-        #datafile = 'data/synth_core.txt'
-        #core_depths = np.genfromtxt(datafile, usecols=(0), unpack = True) 
-        #core_data = np.loadtxt('data/synth_core_bi.txt')'''
-
+     
     if problem ==1:
         simtime = 8500
         timestep = np.arange(0,simtime+1,50)
@@ -1747,17 +1761,28 @@ def main():
     sed_pos = pos_param[0:12,:] 
     flow_pos = pos_param[12:24,:]
     glv_pos =   pos_param[24:,]
+
+    print(likelihood_rep, ' *likelihood_rep* ')
  
 
     
 
-    print('Successfully sampled') 
+    print('Successfully sampled   :   ', likelihood_rep.shape) 
+
+    likelihood_combined = likelihood_rep[:,0]
 
 
-    plt.plot( likelihood_rep.flatten()) 
+    print(likelihood_combined, ' *likelihood_combined* ')
+ 
+
+
+
+
+    plt.plot(  likelihood_combined ) 
     plt.xlabel('Samples')
     plt.ylabel('likelihood') 
     plt.savefig( fname+'/rep_likelihoodlist.png')
+    plt.clf()
 
 
 
